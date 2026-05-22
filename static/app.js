@@ -1,0 +1,1132 @@
+// ═══════════════════════════════════════════ INIT
+lucide.createIcons();
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let map, mapMarker, mapPolyline;
+let pathData = [], watchId = null, currentTripId = null;
+let tripPurpose = 'Tour';
+let userCurrentLatLng = null;
+let allTrips = [];
+let selectedImageData = null;
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+async function checkAuth() {
+    try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.logged_in) {
+            document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
+            showView('dashboard-view');
+            loadTrips();
+        } else {
+            showView('login-view');
+        }
+    } catch { showView('login-view'); }
+}
+
+function switchAuthTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', (i === 0) === (tab === 'login')));
+    document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
+    document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
+}
+
+async function doLogin() {
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errEl = document.getElementById('login-error');
+    errEl.classList.add('hidden');
+    if (!username || !password) { errEl.textContent = 'Please fill in all fields.'; errEl.classList.remove('hidden'); return; }
+    try {
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password }) });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
+            showView('dashboard-view');
+            loadTrips();
+        } else {
+            errEl.textContent = data.error || 'Login failed.';
+            errEl.classList.remove('hidden');
+        }
+    } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
+}
+
+async function doRegister() {
+    const display_name = document.getElementById('reg-name').value.trim();
+    const username = document.getElementById('reg-username').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const errEl = document.getElementById('reg-error');
+    errEl.classList.add('hidden');
+    if (!username || !password) { errEl.textContent = 'Username and password required.'; errEl.classList.remove('hidden'); return; }
+    try {
+        const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password, display_name: display_name || username }) });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
+            showView('dashboard-view');
+            loadTrips();
+        } else {
+            errEl.textContent = data.error || 'Registration failed.';
+            errEl.classList.remove('hidden');
+        }
+    } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
+}
+
+async function doLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    showView('login-view');
+}
+
+// ─── View Navigation ──────────────────────────────────────────────────────────
+function showView(viewId) {
+    document.querySelectorAll('.view').forEach(v => {
+        v.classList.remove('active-view');
+        v.classList.add('hidden');
+    });
+    const v = document.getElementById(viewId);
+    v.classList.remove('hidden');
+    v.classList.add('active-view');
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+function toggleTheme() {
+    document.body.classList.toggle('dark');
+    const isDark = document.body.classList.contains('dark');
+    document.getElementById('theme-icon').setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+    lucide.createIcons();
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, duration = 2200) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.remove('hidden');
+    clearTimeout(window._toastTimer);
+    window._toastTimer = setTimeout(() => t.classList.add('hidden'), duration);
+}
+
+// ─── Load Trips ───────────────────────────────────────────────────────────────
+async function loadTrips() {
+    try {
+        const res = await fetch('/api/trips');
+        if (res.status === 401) { showView('login-view'); return; }
+        allTrips = await res.json();
+        renderTripsList();
+    } catch { document.getElementById('trips-list').innerHTML = '<div class="empty-placeholder">Could not load trips.</div>'; }
+}
+
+function renderTripsList() {
+    const list = document.getElementById('trips-list');
+    if (!allTrips.length) {
+        list.innerHTML = '<div class="empty-placeholder">No trips yet. Start your first adventure!</div>';
+        return;
+    }
+    list.innerHTML = allTrips.slice(0, 5).map(t => `
+        <div class="trip-card">
+            <div class="trip-card-left">
+                <div class="trip-icon"><i data-lucide="map-pin"></i></div>
+                <div>
+                    <div class="trip-dest">${t.destination}</div>
+                    <div class="trip-meta">${t.purpose} · ${new Date(t.created_at).toLocaleDateString('en-IN')}</div>
+                    ${t.cost > 0 ? `<div class="trip-cost-badge">₹${Number(t.cost).toLocaleString('en-IN')}</div>` : ''}
+                </div>
+            </div>
+            <button class="icon-btn blue" onclick="showTripDetail(${t.id})"><i data-lucide="chevron-right"></i></button>
+        </div>
+    `).join('');
+    lucide.createIcons();
+}
+
+function showTripDetail(tripId) {
+    const t = allTrips.find(x => x.id === tripId);
+    if (!t) return;
+    showToast(`${t.destination} — ₹${Number(t.cost).toLocaleString('en-IN')}`);
+}
+
+// ─── Trip Setup Modal ─────────────────────────────────────────────────────────
+function showSetupModal() {
+    document.getElementById('setup-modal').classList.remove('hidden');
+    detectLocation();
+}
+function hideSetupModal() {
+    document.getElementById('setup-modal').classList.add('hidden');
+}
+
+function detectLocation() {
+    const input = document.getElementById('start-point-input');
+    const iconWrap = document.getElementById('start-icon-wrap');
+    const detectWrap = document.getElementById('detect-icon-wrap');
+    input.value = 'Detecting location...';
+    iconWrap.innerHTML = '<i data-lucide="loader-2" class="spin text-blue" style="width:18px;height:18px"></i>';
+    detectWrap.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:18px;height:18px"></i>';
+    lucide.createIcons();
+    if (!navigator.geolocation) { input.value = 'GPS not supported'; return; }
+    navigator.geolocation.getCurrentPosition(
+        async pos => {
+            userCurrentLatLng = [pos.coords.latitude, pos.coords.longitude];
+            let name = `${pos.coords.latitude.toFixed(3)}, ${pos.coords.longitude.toFixed(3)}`;
+            try {
+                const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
+                const d = await r.json();
+                if (d.address) name = d.address.city || d.address.town || d.address.village || d.address.suburb || name;
+            } catch {}
+            input.value = `📍 ${name}`;
+            iconWrap.innerHTML = '<i data-lucide="check-circle" style="color:#22c55e;width:18px;height:18px"></i>';
+            detectWrap.innerHTML = '<i data-lucide="crosshair" style="width:18px;height:18px"></i>';
+            lucide.createIcons();
+        },
+        () => {
+            input.value = 'GPS Unavailable';
+            iconWrap.innerHTML = '<i data-lucide="alert-circle" style="color:#ef4444;width:18px;height:18px"></i>';
+            detectWrap.innerHTML = '<i data-lucide="crosshair" style="width:18px;height:18px"></i>';
+            lucide.createIcons();
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+    );
+}
+
+let startTimeout;
+function onStartChange() {
+    clearTimeout(startTimeout);
+    startTimeout = setTimeout(async () => {
+        const start = document.getElementById('start-point-input').value.trim();
+        const iconWrap = document.getElementById('start-icon-wrap');
+        if (start.length > 2) {
+            iconWrap.innerHTML = '<i data-lucide="loader-2" class="spin text-blue" style="width:18px;height:18px"></i>';
+            lucide.createIcons();
+            try {
+                const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(start)}`);
+                const geoData = await geoRes.json();
+                if (geoData && geoData.length > 0) {
+                    userCurrentLatLng = [parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)];
+                    iconWrap.innerHTML = '<i data-lucide="check-circle" style="color:#22c55e;width:18px;height:18px"></i>';
+                    lucide.createIcons();
+                    // recalculate distance if destination is also present
+                    onDestChange();
+                } else {
+                    iconWrap.innerHTML = '<i data-lucide="map-pin" class="text-blue"></i>';
+                    lucide.createIcons();
+                }
+            } catch (err) {
+                console.error("Error geocoding start location:", err);
+            }
+        }
+    }, 1200);
+}
+
+function selectPurpose(el) {
+    document.querySelectorAll('.purpose-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    tripPurpose = el.dataset.purpose;
+    recalcCost();
+    updateSetupSuggestions();
+}
+
+let destTimeout;
+function onDestChange() {
+    updateSetupSuggestions();
+    
+    // Auto-calculate distance
+    clearTimeout(destTimeout);
+    destTimeout = setTimeout(async () => {
+        const dest = document.getElementById('destination-input').value.trim();
+        if (dest.length > 2 && userCurrentLatLng) {
+            try {
+                const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(dest)}`);
+                const geoData = await geoRes.json();
+                
+                if (geoData && geoData.length > 0) {
+                    const destLat = parseFloat(geoData[0].lat);
+                    const destLon = parseFloat(geoData[0].lon);
+                    
+                    let distKM = 0;
+                    try {
+                        const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${userCurrentLatLng[1]},${userCurrentLatLng[0]};${destLon},${destLat}?overview=false`);
+                        const routeData = await routeRes.json();
+                        if (routeData && routeData.routes && routeData.routes.length > 0) {
+                            distKM = Math.round(routeData.routes[0].distance / 100) / 10;
+                        }
+                    } catch (e) {
+                        console.warn('Routing failed, using straight-line distance');
+                    }
+                    
+                    if (distKM === 0) {
+                        distKM = calcPathDistance([userCurrentLatLng, [destLat, destLon]]);
+                    }
+                    
+                    if (distKM > 0) {
+                        document.getElementById('calc-distance').value = distKM;
+                        recalcCost();
+                        showToast(`Calculated distance: ${distKM} km`);
+                    }
+                }
+            } catch (err) {
+                console.error("Error calculating distance:", err);
+            }
+        }
+    }, 1200);
+    
+    recalcCost();
+}
+
+async function updateSetupSuggestions() {
+    const dest = document.getElementById('destination-input').value.trim();
+    const card = document.getElementById('setup-suggestions-card');
+    if (tripPurpose === 'Tour' && dest.length > 2) {
+        card.classList.remove('hidden');
+        document.getElementById('sugg-loc-label').textContent = dest;
+        document.getElementById('setup-suggestions-list').innerHTML = '<div style="color:var(--sub);font-size:0.8rem;padding:8px 0">Loading spots...</div>';
+        try {
+            const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(dest)}`);
+            const places = await res.json();
+            const badge = document.getElementById('sugg-count-badge');
+            badge.textContent = places.length ? `${places.length} spots` : '';
+            if (!places.length) {
+                document.getElementById('setup-suggestions-list').innerHTML = '<div style="color:var(--sub);font-size:0.8rem;padding:8px 0">No spots found nearby.</div>';
+                return;
+            }
+            const typeEmoji = { attraction:'🏛', museum:'🏛', viewpoint:'👁', historic:'🏯', park:'🌿', temple:'🛕' };
+            document.getElementById('setup-suggestions-list').innerHTML = places.slice(0, 8).map(p => `
+                <div class="sugg-item">
+                    <span>${typeEmoji[p.type] || '📍'}</span>
+                    <span class="sugg-item-type">${p.type}</span>
+                    <span class="sugg-item-name">${escHtml(p.name)}</span>
+                </div>
+            `).join('');
+        } catch {}
+    } else {
+        card.classList.add('hidden');
+    }
+}
+
+// ─── Cost Calculator ──────────────────────────────────────────────────────────
+async function recalcCost() {
+    // Auto-fill GPS-tracked distance if available and field is empty
+    const distField = document.getElementById('calc-distance');
+    if ((!distField.value || distField.value === '0') && pathData.length > 1) {
+        const gpsDist = calcPathDistance(pathData);
+        if (gpsDist > 0) distField.value = gpsDist;
+    }
+    const distance = parseFloat(distField.value) || 0;
+    const days = parseInt(document.getElementById('calc-days').value) || 1;
+    const people = parseInt(document.getElementById('calc-people').value) || 1;
+    const vehicle = document.getElementById('calc-vehicle').value;
+    const breakdown = document.getElementById('cost-breakdown');
+
+    if (distance <= 0) { breakdown.classList.add('hidden'); return; }
+
+    try {
+        const res = await fetch('/api/calculate-cost', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ distance, days, people, vehicle, purpose: tripPurpose })
+        });
+        const data = await res.json();
+        const fmt = n => '₹' + Number(n).toLocaleString('en-IN');
+        document.getElementById('c-fuel').textContent = fmt(data.fuel);
+        document.getElementById('c-food').textContent = fmt(data.food);
+        document.getElementById('c-acc').textContent  = fmt(data.accommodation);
+        document.getElementById('c-misc').textContent = fmt(data.misc);
+        document.getElementById('c-total').textContent = fmt(data.total);
+        document.getElementById('c-pp').textContent = fmt(data.per_person);
+        breakdown.classList.remove('hidden');
+    } catch {}
+}
+
+// ─── Start Trip ───────────────────────────────────────────────────────────────
+async function startTrip() {
+    const dest = document.getElementById('destination-input').value.trim();
+    const start = document.getElementById('start-point-input').value.trim();
+    if (!dest) { showToast('Enter a destination first!'); return; }
+
+    const totalText = document.getElementById('c-total')?.textContent || '0';
+    const totalNum = parseFloat(totalText.replace(/[^0-9.]/g, '')) || 0;
+
+    hideSetupModal();
+    showView('map-view');
+    document.getElementById('trip-status-badge').textContent = `${tripPurpose.toUpperCase()} ACTIVE`;
+    document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
+    initMap();
+
+    try {
+        const res = await fetch('/api/trips', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                destination: dest, 
+                start_loc: start,
+                purpose: tripPurpose,
+                cost: totalNum,
+                fuel_cost: parseFloat(document.getElementById('c-fuel')?.textContent?.replace(/[^0-9.]/g, '') || 0),
+                food_cost: parseFloat(document.getElementById('c-food')?.textContent?.replace(/[^0-9.]/g, '') || 0),
+                accommodation_cost: parseFloat(document.getElementById('c-acc')?.textContent?.replace(/[^0-9.]/g, '') || 0),
+                other_cost: parseFloat(document.getElementById('c-misc')?.textContent?.replace(/[^0-9.]/g, '') || 0),
+                vehicle_type: document.getElementById('calc-vehicle')?.value || 'car'
+            })
+        });
+        const data = await res.json();
+        currentTripId = data.trip_id;
+    } catch (err) { console.error(err); }
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+            userCurrentLatLng = [pos.coords.latitude, pos.coords.longitude];
+            map.setView(userCurrentLatLng, 15);
+            mapMarker.setLatLng(userCurrentLatLng);
+        }, () => {});
+        watchId = navigator.geolocation.watchPosition(pos => {
+            const latlng = [pos.coords.latitude, pos.coords.longitude];
+            userCurrentLatLng = latlng;
+            map.panTo(latlng);
+            mapMarker.setLatLng(latlng);
+            pathData.push(latlng);
+            mapPolyline.setLatLngs(pathData);
+            if (tripPurpose === 'Tour') fetchLiveSuggestions(pos.coords.latitude, pos.coords.longitude);
+        }, () => {}, { enableHighAccuracy: true });
+    }
+}
+
+// ─── Map ──────────────────────────────────────────────────────────────────────
+function initMap() {
+    if (map) { setTimeout(() => map.invalidateSize(), 150); return; }
+    map = L.map('map', { zoomControl: false }).setView([20.5937, 78.9629], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
+    mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
+    mapMarker = L.marker([20.5937, 78.9629]).addTo(map);
+    setTimeout(() => map.invalidateSize(), 150);
+}
+
+function centerMapOnUser() {
+    if (userCurrentLatLng && map) map.setView(userCurrentLatLng, 16);
+    else showToast('Live location not available yet.');
+}
+
+async function fetchLiveSuggestions(lat, lng) {
+    try {
+        const res = await fetch(`/api/suggestions?lat=${lat}&lng=${lng}&purpose=Tour`);
+        const places = await res.json();
+        if (!places.length) return;
+        document.getElementById('suggestions-box').classList.remove('hidden');
+        document.getElementById('suggestions-list').innerHTML = places.map(p =>
+            `<div class="sugg-chip" onclick="centerMapOnPlace(${p.lat}, ${p.lng})">📍 ${p.name}</div>`
+        ).join('');
+        
+        places.forEach(p => {
+            if(p.lat && p.lng) {
+                const icon = getPlaceIcon(p.type);
+                L.marker([p.lat, p.lng], { icon }).addTo(map)
+                 .bindPopup(`<strong>${p.name}</strong><br>${p.description}`);
+            }
+        });
+    } catch {}
+}
+
+function getPlaceIcon(type) {
+    const iconMap = {
+        'attraction': { color: '#3b82f6', icon: 'camera' },
+        'hospital': { color: '#ef4444', icon: 'plus-square' },
+        'fuel': { color: '#f59e0b', icon: 'fuel' }
+    };
+    const config = iconMap[type] || iconMap['attraction'];
+    return L.divIcon({
+        className: 'custom-div-icon',
+        html: `<div style="background-color:${config.color}; color:white; border-radius:50%; width:30px; height:30px; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.2)">
+                 <i data-lucide="${config.icon}" style="width:16px; height:16px"></i>
+               </div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+    });
+}
+
+function centerMapOnPlace(lat, lng) {
+    if (map) map.setView([lat, lng], 16);
+}
+
+async function endTrip() {
+    if (watchId) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    const gpsDistance = calcPathDistance(pathData);
+    if (currentTripId) {
+        try {
+            await fetch(`/api/trips/${currentTripId}`, {
+                method: 'PUT',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ path: pathData, distance: gpsDistance })
+            });
+        } catch {}
+    }
+    pathData = []; currentTripId = null;
+    if (mapPolyline) mapPolyline.setLatLngs([]);
+    // Always re-fetch trips so history and dashboard are up-to-date
+    await loadTrips();
+    showView('dashboard-view');
+    showToast('Trip ended! ' + (gpsDistance > 0 ? gpsDistance + ' km tracked' : ''));
+}
+
+function calcPathDistance(path) {
+    if (path.length < 2) return 0;
+    let d = 0;
+    for (let i = 1; i < path.length; i++) {
+        const [la1,lo1] = path[i-1], [la2,lo2] = path[i];
+        const R = 6371, dLa = (la2-la1)*Math.PI/180, dLo = (lo2-lo1)*Math.PI/180;
+        const a = Math.sin(dLa/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;
+        d += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    return Math.round(d * 10) / 10;
+}
+
+// ─── Quick actions during trip ────────────────────────────────────────────────
+function openQuickNote() {
+    openNoteEditor(currentTripId);
+    showView('notes-view');
+}
+function openQuickCamera() {
+    openImageUpload(currentTripId);
+}
+
+// ─── Notes ────────────────────────────────────────────────────────────────────
+async function openNotesView() {
+    showView('notes-view');
+    await loadNotes();
+}
+
+async function loadNotes() {
+    const list = document.getElementById('notes-list');
+    list.innerHTML = '<div class="empty-placeholder">Loading...</div>';
+    try {
+        const res = await fetch('/api/notes');
+        const notes = await res.json();
+        if (!notes.length) { list.innerHTML = '<div class="empty-placeholder">No notes yet. Tap + to add one!</div>'; return; }
+        list.innerHTML = notes.map(n => `
+            <div class="note-card" id="note-${n.id}">
+                <div class="note-actions">
+                    <button class="note-action-btn" onclick="openNoteEditor(null, ${n.id})"><i data-lucide="edit-2"></i></button>
+                    <button class="note-action-btn red" onclick="deleteNote(${n.id})"><i data-lucide="trash-2"></i></button>
+                </div>
+                <div class="note-card-title">${escHtml(n.title)}</div>
+                <div class="note-card-body">${escHtml(n.content)}</div>
+                <div class="note-card-date">${new Date(n.created_at).toLocaleDateString('en-IN')}</div>
+            </div>
+        `).join('');
+        lucide.createIcons();
+    } catch { list.innerHTML = '<div class="empty-placeholder">Error loading notes.</div>'; }
+}
+
+async function openNoteEditor(tripId = null, noteId = null) {
+    document.getElementById('editing-note-id').value = noteId || '';
+    document.getElementById('note-title-input').value = '';
+    document.getElementById('note-content-input').value = '';
+    document.getElementById('note-editor-title').textContent = noteId ? 'Edit Note' : 'New Note';
+
+    if (noteId) {
+        try {
+            const res = await fetch('/api/notes');
+            const notes = await res.json();
+            const n = notes.find(x => x.id === noteId);
+            if (n) {
+                document.getElementById('note-title-input').value = n.title || '';
+                document.getElementById('note-content-input').value = n.content || '';
+                tripId = n.trip_id || tripId;
+            }
+        } catch { showToast('Could not load note.'); return; }
+    }
+
+    populateTripSelect('note-trip-select', tripId);
+    document.getElementById('note-editor-modal').classList.remove('hidden');
+}
+
+function closeNoteEditor() {
+    document.getElementById('note-editor-modal').classList.add('hidden');
+}
+
+async function saveNote() {
+    const noteId = document.getElementById('editing-note-id').value;
+    const title = document.getElementById('note-title-input').value.trim() || 'Untitled';
+    const content = document.getElementById('note-content-input').value.trim();
+    const trip_id = document.getElementById('note-trip-select').value || null;
+    if (!content) { showToast('Write something first!'); return; }
+    try {
+        if (noteId) {
+            await fetch(`/api/notes/${noteId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title, content }) });
+        } else {
+            await fetch('/api/notes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title, content, trip_id }) });
+        }
+        closeNoteEditor();
+        showToast('Note saved! ✅');
+        loadNotes();
+    } catch { showToast('Error saving note.'); }
+}
+
+async function deleteNote(noteId) {
+    if (!confirm('Delete this note?')) return;
+    await fetch(`/api/notes/${noteId}`, { method: 'DELETE' });
+    showToast('Note deleted');
+    loadNotes();
+}
+
+// ─── Memories ─────────────────────────────────────────────────────────────────
+async function openMemoriesView() {
+    showView('memories-view');
+    await loadMemories();
+}
+
+async function loadMemories() {
+    const grid = document.getElementById('memories-grid');
+    grid.innerHTML = '<div class="empty-placeholder">Loading memories...</div>';
+    try {
+        const res = await fetch('/api/memories');
+        const mems = await res.json();
+        if (!mems.length) { grid.innerHTML = '<div class="empty-placeholder">No memories yet. Upload your first photo!</div>'; return; }
+        grid.innerHTML = mems.map(m => `
+            <div class="memory-item" onclick="openLightbox(${m.id}, '${escHtml(m.caption)}')">
+                <img src="/api/memories/${m.id}/image-thumb" onerror="this.src='/api/memories/${m.id}/image-inline'" alt="${escHtml(m.caption)}">
+                ${m.caption ? `<div class="memory-caption">${escHtml(m.caption)}</div>` : ''}
+                <button class="memory-delete" onclick="event.stopPropagation(); deleteMemory(${m.id})">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+        `).join('');
+        lucide.createIcons();
+        // Load images
+        mems.forEach(m => loadMemoryThumbnail(m.id));
+    } catch { grid.innerHTML = '<div class="empty-placeholder">Error loading memories.</div>'; }
+}
+
+async function loadMemoryThumbnail(memId) {
+    try {
+        const res = await fetch(`/api/memories/${memId}/image`);
+        const data = await res.json();
+        const imgs = document.querySelectorAll(`[onclick*="openLightbox(${memId},"] img`);
+        imgs.forEach(img => { img.src = data.image_data; });
+    } catch {}
+}
+
+function openImageUpload(tripId = null) {
+    document.getElementById('img-file-input').value = '';
+    document.getElementById('img-caption-input').value = '';
+    document.getElementById('upload-preview').innerHTML = `<i data-lucide="image-plus"></i><p>Tap to select photo</p>`;
+    lucide.createIcons();
+    selectedImageData = null;
+    populateTripSelect('img-trip-select', tripId);
+    document.getElementById('image-upload-modal').classList.remove('hidden');
+}
+function closeImageUpload() {
+    document.getElementById('image-upload-modal').classList.add('hidden');
+    selectedImageData = null;
+}
+
+function onImageSelected(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        selectedImageData = e.target.result;
+        document.getElementById('upload-preview').innerHTML = `<img src="${selectedImageData}" style="max-height:220px;border-radius:12px;object-fit:cover">`;
+    };
+    reader.readAsDataURL(file);
+}
+
+async function saveMemory() {
+    if (!selectedImageData) { showToast('Select a photo first!'); return; }
+    const caption = document.getElementById('img-caption-input').value.trim();
+    const trip_id = document.getElementById('img-trip-select').value || null;
+    const filename = document.getElementById('img-file-input').files[0]?.name || 'photo.jpg';
+    try {
+        await fetch('/api/memories', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ image_data: selectedImageData, caption, trip_id, filename })
+        });
+        closeImageUpload();
+        showToast('Memory saved! 📸');
+        loadMemories();
+    } catch { showToast('Error saving memory.'); }
+}
+
+async function deleteMemory(memId) {
+    if (!confirm('Delete this memory?')) return;
+    await fetch(`/api/memories/${memId}`, { method: 'DELETE' });
+    showToast('Memory deleted');
+    loadMemories();
+}
+
+async function openLightbox(memId, caption) {
+    const lb = document.getElementById('lightbox');
+    const img = document.getElementById('lightbox-img');
+    const cap = document.getElementById('lightbox-caption');
+    img.src = '';
+    cap.textContent = caption || '';
+    lb.classList.remove('hidden');
+    try {
+        const res = await fetch(`/api/memories/${memId}/image`);
+        const data = await res.json();
+        img.src = data.image_data;
+    } catch { lb.classList.add('hidden'); }
+}
+function closeLightbox() {
+    document.getElementById('lightbox').classList.add('hidden');
+}
+
+// ─── History View ─────────────────────────────────────────────────────────────
+async function openHistoryView() {
+    showView('history-view');
+    const list = document.getElementById('history-list');
+    list.innerHTML = '<div class="empty-placeholder">Loading history...</div>';
+    // Always re-fetch fresh from server
+    try {
+        const res = await fetch('/api/trips');
+        if (res.status === 401) { showView('login-view'); return; }
+        allTrips = await res.json();
+    } catch {
+        list.innerHTML = '<div class="empty-placeholder">Error loading trips.</div>';
+        return;
+    }
+    if (!allTrips.length) { list.innerHTML = '<div class="empty-placeholder">No trips yet. Start your first adventure!</div>'; return; }
+    list.innerHTML = allTrips.map(t => `
+        <div class="history-card">
+            <div class="history-dest">${escHtml(t.destination)}</div>
+            <div class="history-meta">
+                <span class="history-tag purpose">${t.purpose}</span>
+                ${t.cost > 0 ? `<span class="history-tag cost">₹${Number(t.cost).toLocaleString('en-IN')}</span>` : ''}
+                ${t.distance > 0 ? `<span class="history-tag date">📍 ${t.distance} km</span>` : ''}
+                <span class="history-tag date">${new Date(t.created_at).toLocaleDateString('en-IN')}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+// ─── Planner ──────────────────────────────────────────────────────────────────
+let plannerMap, plannerRoutingControl, plannerMarkers = [];
+let routeProfile = 'driving';
+
+function showPlanner() {
+    showView('planner-view');
+    initPlannerMap();
+    detectPlannerLocation(false);
+}
+
+async function detectPlannerLocation(force = false) {
+    const startInput = document.getElementById('p-start');
+    if (!startInput || (!force && startInput.value.trim() !== '')) return;
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const { latitude, longitude } = pos.coords;
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                const data = await res.json();
+                if (data && data.display_name) {
+                    startInput.value = data.display_name.split(',').slice(0, 3).join(',');
+                    updatePlannerRoute();
+                }
+            } catch (err) {
+                console.error("Reverse geocoding error:", err);
+            }
+        }, (err) => {
+            console.warn("Geolocation error:", err);
+        });
+    }
+}
+
+function initPlannerMap() {
+    if (plannerMap) { setTimeout(() => plannerMap.invalidateSize(), 150); return; }
+    plannerMap = L.map('planner-map', { zoomControl: false }).setView([12.9716, 77.5946], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(plannerMap);
+    
+    plannerRoutingControl = L.Routing.control({
+        waypoints: [],
+        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+        lineOptions: { styles: [{ color: '#3b82f6', weight: 6, opacity: 0.8 }] },
+        createMarker: () => null,
+        addWaypoints: false,
+        routeWhileDragging: false
+    }).addTo(plannerMap);
+
+    plannerRoutingControl.on('routesfound', function(e) {
+        const routes = e.routes;
+        const summary = routes[0].summary;
+        const distKM = summary.totalDistance / 1000;
+        const timeMin = Math.round(summary.totalTime / 60);
+        
+        document.getElementById('p-dist').textContent = distKM.toFixed(1) + ' km';
+        document.getElementById('p-time').textContent = timeMin + ' min';
+        
+        // Approx cost: ₹8 per km + ₹500 base per day (assumed)
+        const estCost = Math.round(distKM * 8 + 500);
+        document.getElementById('p-cost').textContent = '₹' + estCost.toLocaleString('en-IN');
+        
+        discoverAlongRoute(routes[0].coordinates);
+    });
+    
+    setTimeout(() => plannerMap.invalidateSize(), 150);
+}
+
+function addStopInput() {
+    const container = document.getElementById('p-stops');
+    const div = document.createElement('div');
+    div.className = 'waypoint-item';
+    div.innerHTML = `
+        <i data-lucide="circle" style="width:14px;height:14px"></i>
+        <input type="text" placeholder="Add a stop..." onchange="updatePlannerRoute()">
+        <button class="icon-btn small red" onclick="this.parentElement.remove(); updatePlannerRoute()"><i data-lucide="minus-circle"></i></button>
+    `;
+    container.appendChild(div);
+    lucide.createIcons();
+}
+
+async function updatePlannerRoute() {
+    const start = document.getElementById('p-start').value.trim();
+    const end = document.getElementById('p-end').value.trim();
+    const stopInputs = Array.from(document.getElementById('p-stops').querySelectorAll('input'));
+    const stops = stopInputs.map(i => i.value.trim()).filter(v => v.length > 2);
+
+    if (start.length < 3 || end.length < 3) return;
+
+    const allPoints = [start, ...stops, end].filter(v => v.length >= 3);
+    const waypoints = [];
+
+    for (let loc of allPoints) {
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(loc)}`);
+            const data = await res.json();
+            if (data && data.length > 0) {
+                waypoints.push(L.latLng(data[0].lat, data[0].lon));
+            }
+            // Small delay to respect Nominatim rate limits
+            await new Promise(r => setTimeout(r, 600));
+        } catch {}
+    }
+
+    if (waypoints.length >= 2) {
+        plannerRoutingControl.setWaypoints(waypoints);
+        const bounds = L.latLngBounds(waypoints);
+        plannerMap.fitBounds(bounds, { padding: [50, 50] });
+    }
+}
+
+function toggleFilter(el) {
+    el.classList.toggle('active');
+    updatePlannerRoute(); // Re-fetch items
+}
+
+async function discoverAlongRoute(coords) {
+    // Clear old markers
+    plannerMarkers.forEach(m => plannerMap.removeLayer(m));
+    plannerMarkers = [];
+    const list = document.getElementById('itinerary-summary');
+    list.innerHTML = '';
+
+    // Sample points along the route to discover items
+    const sampleIndices = [0, Math.floor(coords.length/2), coords.length-1];
+    const activeCats = Array.from(document.querySelectorAll('.filter-chips .chip.active')).map(c => c.dataset.cat);
+    
+    if (activeCats.length === 0) return;
+
+    const discovered = new Set();
+    const places = [];
+
+    for (let idx of sampleIndices) {
+        const pt = coords[idx];
+        for (let cat of activeCats) {
+            try {
+                const res = await fetch(`/api/suggestions?lat=${pt.lat}&lng=${pt.lng}&category=${cat}`);
+                const data = await res.json();
+                data.forEach(p => {
+                    if (!discovered.has(p.name)) {
+                        discovered.add(p.name);
+                        places.push(p);
+                        const marker = L.marker([p.lat, p.lng], {
+                            icon: getPlaceIcon(p.type)
+                        }).addTo(plannerMap).bindPopup(p.name);
+                        plannerMarkers.push(marker);
+                    }
+                });
+            } catch {}
+        }
+    }
+
+    list.innerHTML = Array.from(discovered).slice(0, 6).map((name, i) => `
+        <div class="itinerary-item">
+            <div class="itinerary-num">${i+1}</div>
+            <div class="itinerary-name">${name}</div>
+        </div>
+    `).join('');
+}
+
+function setRouteProfile(profile) {
+    routeProfile = profile;
+    document.querySelectorAll('.opt-btn').forEach(b => b.classList.toggle('active', b.onclick.toString().includes(profile)));
+    updatePlannerRoute();
+}
+
+async function confirmPlannerTrip() {
+    const dest = document.getElementById('p-end').value.trim();
+    const start = document.getElementById('p-start').value.trim();
+    const distText = document.getElementById('p-dist').textContent;
+    const costText = document.getElementById('p-cost').textContent;
+    const distance = parseFloat(distText) || 0;
+    const totalNum = parseFloat(costText.replace(/[^0-9.]/g, '')) || 0;
+
+    if (!dest || distance === 0) { showToast('Plan a valid route first!'); return; }
+
+    try {
+        const res = await fetch('/api/trips', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                destination: dest,
+                start_loc: start,
+                purpose: 'Tour',
+                cost: totalNum,
+                vehicle_type: 'car'
+            })
+        });
+        const data = await res.json();
+        currentTripId = data.trip_id;
+        
+        showToast('Trip Saved! Starting navigation...');
+        showView('map-view');
+        initMap();
+        
+        // Populate tracking with planned start
+        updatePlannerRoute(); // Ensure latest
+    } catch { showToast('Error saving trip.'); }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function populateTripSelect(selectId, selectedTripId = null) {
+    const sel = document.getElementById(selectId);
+    sel.innerHTML = '<option value="">— No Trip —</option>' + allTrips.map(t =>
+        `<option value="${t.id}" ${t.id == selectedTripId ? 'selected' : ''}>${escHtml(t.destination)}</option>`
+    ).join('');
+}
+
+function escHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function getPlaceIcon(type) {
+    const colors = { attraction: '#3b82f6', food: '#f97316', nature: '#22c55e', essential: '#a855f7', hospital: '#ef4444' };
+    const color = colors[type] || '#3b82f6';
+    return L.divIcon({
+        className: 'custom-marker',
+        html: `<div style="background:${color};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:2px solid white">
+                <div style="width:8px;height:8px;background:white;border-radius:50%"></div>
+               </div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+}
+
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+let selectedExpCat = 'Food';
+
+function openExpensesView() {
+    showView('expenses-view');
+    populateTripSelect('exp-trip-filter', null);
+    loadExpenses();
+}
+
+function openExpenseModal(tripId = null) {
+    document.getElementById('exp-amount').value = '';
+    document.getElementById('exp-desc').value = '';
+    selectedExpCat = 'Food';
+    document.querySelectorAll('.exp-cat-chip').forEach(c => c.classList.toggle('active', c.dataset.cat === 'Food'));
+    populateTripSelect('exp-trip-select', tripId || currentTripId);
+    document.getElementById('expense-modal').classList.remove('hidden');
+}
+
+function closeExpenseModal() {
+    document.getElementById('expense-modal').classList.add('hidden');
+}
+
+function selectExpCat(el) {
+    document.querySelectorAll('.exp-cat-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    selectedExpCat = el.dataset.cat;
+}
+
+async function saveExpense() {
+    const amount = parseFloat(document.getElementById('exp-amount').value);
+    if (!amount || amount <= 0) { showToast('Enter a valid amount!'); return; }
+    const desc = document.getElementById('exp-desc').value.trim();
+    const trip_id = document.getElementById('exp-trip-select').value || null;
+    try {
+        await fetch('/api/expenses', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ category: selectedExpCat, description: desc, amount, trip_id })
+        });
+        closeExpenseModal();
+        showToast('Expense added! 💸');
+        loadExpenses();
+    } catch { showToast('Error saving expense.'); }
+}
+
+async function loadExpenses() {
+    const tripFilter = document.getElementById('exp-trip-filter')?.value || '';
+    const list = document.getElementById('expenses-list');
+    list.innerHTML = '<div class="empty-placeholder">Loading...</div>';
+    try {
+        const url = '/api/expenses' + (tripFilter ? `?trip_id=${tripFilter}` : '');
+        const res = await fetch(url);
+        const expenses = await res.json();
+
+        // Update summary
+        const total = expenses.reduce((s, e) => s + e.amount, 0);
+        const food = expenses.filter(e => e.category === 'Food').reduce((s, e) => s + e.amount, 0);
+        const other = total - food;
+        const fmt = n => '₹' + Number(n).toLocaleString('en-IN');
+        document.getElementById('exp-total-val').textContent = fmt(total);
+        document.getElementById('exp-food-val').textContent = fmt(food);
+        document.getElementById('exp-other-val').textContent = fmt(other);
+
+        if (!expenses.length) {
+            list.innerHTML = '<div class="empty-placeholder">No expenses yet. Tap + to add one!</div>';
+            return;
+        }
+        const catEmoji = { Food:'🍽', Transport:'🚗', 'Entry Fee':'🎟', Shopping:'🛍', Hotel:'🏨', Other:'💰' };
+        const catColor = { Food:'rgba(249,115,22,0.15)', Transport:'rgba(59,130,246,0.15)', 'Entry Fee':'rgba(168,85,247,0.15)', Shopping:'rgba(236,72,153,0.15)', Hotel:'rgba(20,184,166,0.15)', Other:'rgba(107,114,128,0.15)' };
+        list.innerHTML = expenses.map(e => `
+            <div class="expense-item">
+                <div class="exp-icon" style="background:${catColor[e.category]||'rgba(107,114,128,0.15)'}">
+                    ${catEmoji[e.category] || '💰'}
+                </div>
+                <div class="exp-info">
+                    <div class="exp-cat-label">${escHtml(e.category)}</div>
+                    <div class="exp-desc-text">${escHtml(e.description || e.category)}</div>
+                    <div class="exp-date">${new Date(e.created_at).toLocaleDateString('en-IN')}</div>
+                </div>
+                <div class="exp-amount">−${fmt(e.amount)}</div>
+                <button class="exp-delete-btn" onclick="deleteExpense(${e.id})"><i data-lucide="trash-2"></i></button>
+            </div>
+        `).join('');
+        lucide.createIcons();
+    } catch { list.innerHTML = '<div class="empty-placeholder">Error loading expenses.</div>'; }
+}
+
+async function deleteExpense(expId) {
+    if (!confirm('Delete this expense?')) return;
+    await fetch(`/api/expenses/${expId}`, { method: 'DELETE' });
+    showToast('Expense deleted');
+    loadExpenses();
+}
+
+// ─── Tourist Spots ────────────────────────────────────────────────────────────
+function openSpotsView() {
+    showView('spots-view');
+    // Pre-fill with last trip destination if available
+    if (allTrips.length > 0) {
+        document.getElementById('spots-search-input').value = allTrips[0].destination || '';
+    }
+}
+
+async function searchTouristSpots() {
+    const dest = document.getElementById('spots-search-input').value.trim();
+    if (!dest) { showToast('Enter a destination first!'); return; }
+
+    const loading = document.getElementById('spots-loading');
+    const list = document.getElementById('spots-list');
+    loading.classList.remove('hidden');
+    list.innerHTML = '';
+
+    try {
+        const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(dest)}`);
+        const spots = await res.json();
+        loading.classList.add('hidden');
+
+        if (!spots.length) {
+            list.innerHTML = '<div class="empty-placeholder">No tourist spots found. Try a nearby city name! 🗺</div>';
+            return;
+        }
+
+        const typeEmoji = { attraction:'🏛', museum:'🏛', viewpoint:'👁', historic:'🏯', park:'🌿', temple:'🛕' };
+        const typeLabel = { attraction:'Attraction', museum:'Museum', viewpoint:'Viewpoint', historic:'Heritage', park:'Park', temple:'Temple' };
+
+        list.innerHTML = spots.map(s => `
+            <div class="spot-card">
+                <div class="spot-card-body">
+                    <div class="spot-header">
+                        <div>
+                            <div class="spot-name">${typeEmoji[s.type] || '📍'} ${escHtml(s.name)}</div>
+                        </div>
+                        <span class="spot-type-badge spot-type-${s.type}">${typeLabel[s.type] || s.type}</span>
+                    </div>
+                    ${s.description ? `<div class="spot-desc">${escHtml(s.description)}</div>` : ''}
+                    <div class="spot-meta">
+                        ${s.opening_hours ? `<div class="spot-meta-item"><i data-lucide="clock"></i>${escHtml(s.opening_hours)}</div>` : ''}
+                        ${s.fee ? `<div class="spot-meta-item"><i data-lucide="ticket"></i>Entry: ${escHtml(s.fee)}</div>` : ''}
+                        ${s.wikipedia ? `<div class="spot-meta-item"><i data-lucide="book-open"></i>Wikipedia</div>` : ''}
+                    </div>
+                </div>
+                ${s.lat && s.lng ? `<button class="spot-map-btn" onclick="viewSpotOnMap(${s.lat}, ${s.lng}, '${escHtml(s.name).replace(/'/g,'')}')">
+                    <i data-lucide="map-pin" style="width:14px;height:14px"></i> View on Map
+                </button>` : ''}
+            </div>
+        `).join('');
+        lucide.createIcons();
+    } catch {
+        loading.classList.add('hidden');
+        list.innerHTML = '<div class="empty-placeholder">Error fetching spots. Try again!</div>';
+    }
+}
+
+function viewSpotOnMap(lat, lng, name) {
+    // Open in a new tab to OpenStreetMap
+    window.open(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`, '_blank');
+}
+
+// ─── AI Assistant ─────────────────────────────────────────────────────────────
+let aiHistory = [];
+
+function openAIAssistant() {
+    document.getElementById('ai-panel').classList.remove('hidden');
+    document.getElementById('ai-overlay').classList.remove('hidden');
+    document.getElementById('ai-input').focus();
+}
+function closeAIAssistant() {
+    document.getElementById('ai-panel').classList.add('hidden');
+    document.getElementById('ai-overlay').classList.add('hidden');
+}
+
+async function sendAIMessage() {
+    const input = document.getElementById('ai-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    input.value = '';
+
+    const msgsEl = document.getElementById('ai-messages');
+    msgsEl.innerHTML += `<div class="ai-msg user">${escHtml(msg)}</div>`;
+
+    const loadingId = 'ai-loading-' + Date.now();
+    msgsEl.innerHTML += `<div class="ai-msg ai loading" id="${loadingId}"><div class="ai-typing"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div></div>`;
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    aiHistory.push({ role: 'user', content: msg });
+
+    try {
+        const response = await fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: aiHistory.slice(-10)
+            })
+        });
+
+        const data = await response.json();
+        const reply = data.content?.map(b => b.type === 'text' ? b.text : '').join('') || 'Sorry, I could not respond right now.';
+
+        aiHistory.push({ role: 'assistant', content: reply });
+
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) loadingEl.outerHTML = `<div class="ai-msg ai">${reply.replace(/\n/g, '<br>')}</div>`;
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+    } catch {
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) loadingEl.outerHTML = `<div class="ai-msg ai">Sorry, I had trouble connecting. Please try again! 🔄</div>`;
+    }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+window.onload = () => {
+    checkAuth();
+    document.getElementById('ai-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendAIMessage(); });
+};

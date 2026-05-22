@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripMate</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ LOGIN VIEW -->
+<div id="login-view" class="view active-view">
+    <div class="login-bg">
+        <div class="login-blob b1"></div>
+        <div class="login-blob b2"></div>
+        <div class="login-blob b3"></div>
+    </div>
+    <div class="login-card">
+        <div class="login-logo">
+            <div class="logo-icon"><i data-lucide="map"></i></div>
+            <h1>TripMate</h1>
+            <p>Your intelligent travel companion</p>
+        </div>
+
+        <div class="tab-switcher" id="auth-tabs">
+            <button class="tab-btn active" onclick="switchAuthTab('login')">Sign In</button>
+            <button class="tab-btn" onclick="switchAuthTab('register')">Create Account</button>
+        </div>
+
+        <!-- Login Form -->
+        <div id="login-form">
+            <div class="field-group">
+                <label>Username</label>
+                <div class="field-wrap">
+                    <i data-lucide="user" class="field-icon"></i>
+                    <input type="text" id="login-username" placeholder="your username" autocomplete="username">
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Password</label>
+                <div class="field-wrap">
+                    <i data-lucide="lock" class="field-icon"></i>
+                    <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+                </div>
+            </div>
+            <div id="login-error" class="auth-error hidden"></div>
+            <button class="auth-btn" onclick="doLogin()">
+                <span>Sign In</span> <i data-lucide="arrow-right"></i>
+            </button>
+            <p class="demo-hint">Demo: <strong>traveler</strong> / <strong>demo123</strong></p>
+        </div>
+
+        <!-- Register Form -->
+        <div id="register-form" class="hidden">
+            <div class="field-group">
+                <label>Display Name</label>
+                <div class="field-wrap">
+                    <i data-lucide="smile" class="field-icon"></i>
+                    <input type="text" id="reg-name" placeholder="Your name">
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Username</label>
+                <div class="field-wrap">
+                    <i data-lucide="at-sign" class="field-icon"></i>
+                    <input type="text" id="reg-username" placeholder="choose a username">
+                </div>
+            </div>
+            <div class="field-group">
+                <label>Password</label>
+                <div class="field-wrap">
+                    <i data-lucide="lock" class="field-icon"></i>
+                    <input type="password" id="reg-password" placeholder="create password">
+                </div>
+            </div>
+            <div id="reg-error" class="auth-error hidden"></div>
+            <button class="auth-btn" onclick="doRegister()">
+                <span>Create Account</span> <i data-lucide="arrow-right"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ DASHBOARD VIEW -->
+<div id="dashboard-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <div>
+                <h1 id="greeting-name" class="greeting">Hi, Traveler! 👋</h1>
+                <p class="subgreet">Ready for a new adventure?</p>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn" onclick="toggleTheme()" title="Theme">
+                    <i id="theme-icon" data-lucide="moon"></i>
+                </button>
+                <button class="icon-btn" onclick="openAIAssistant()" title="AI Assistant">
+                    <i data-lucide="sparkles"></i>
+                </button>
+                <button class="icon-btn text-danger" onclick="doLogout()" title="Logout">
+                    <i data-lucide="log-out"></i>
+                </button>
+            </div>
+        </header>
+
+        <div class="actions-grid">
+            <button class="action-tile blue" onclick="showPlanner()">
+                <div class="tile-icon"><i data-lucide="map"></i></div>
+                <span>Plan Trip</span>
+            </button>
+            <button class="action-tile orange" onclick="openHistoryView()">
+                <div class="tile-icon"><i data-lucide="clock"></i></div>
+                <span>History</span>
+            </button>
+            <button class="action-tile green" onclick="openNotesView()">
+                <div class="tile-icon"><i data-lucide="edit-3"></i></div>
+                <span>Notes</span>
+            </button>
+            <button class="action-tile purple" onclick="openMemoriesView()">
+                <div class="tile-icon"><i data-lucide="image"></i></div>
+                <span>Memories</span>
+            </button>
+            <button class="action-tile teal" onclick="openExpensesView()">
+                <div class="tile-icon"><i data-lucide="wallet"></i></div>
+                <span>Expenses</span>
+            </button>
+            <button class="action-tile pink" onclick="openSpotsView()">
+                <div class="tile-icon"><i data-lucide="landmark"></i></div>
+                <span>Discover</span>
+            </button>
+        </div>
+
+        <section class="section">
+            <h3 class="section-title"><span class="dot blue"></span> Recent Trips</h3>
+            <div id="trips-list"><div class="empty-placeholder">Loading trips...</div></div>
+        </section>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ TRIP SETUP MODAL -->
+<div id="setup-modal" class="modal hidden">
+    <div class="modal-sheet">
+        <div class="modal-header">
+            <h2>Plan Journey</h2>
+            <button class="icon-btn" onclick="hideSetupModal()"><i data-lucide="x"></i></button>
+        </div>
+
+        <div class="field-group">
+            <label>Start Point</label>
+            <div class="field-wrap">
+                <span id="start-icon-wrap" class="field-icon flex-center"><i data-lucide="map-pin" class="text-blue"></i></span>
+                <input type="text" id="start-point-input" class="pl-icon" placeholder="Detecting or enter location..." oninput="onStartChange()">
+                <button class="field-action-btn" onclick="detectLocation()">
+                    <span id="detect-icon-wrap"><i data-lucide="crosshair"></i></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="field-group">
+            <label>Destination</label>
+            <div class="field-wrap">
+                <i data-lucide="navigation" class="field-icon text-red"></i>
+                <input type="text" id="destination-input" class="pl-icon" placeholder="e.g. Mysuru, Karnataka" oninput="onDestChange()">
+            </div>
+        </div>
+
+        <div class="field-group">
+            <label>Purpose</label>
+            <div class="purpose-row">
+                <div class="purpose-chip active" data-purpose="Tour" onclick="selectPurpose(this)"><i data-lucide="plane"></i> Tour</div>
+                <div class="purpose-chip" data-purpose="Business" onclick="selectPurpose(this)"><i data-lucide="briefcase"></i> Work</div>
+                <div class="purpose-chip" data-purpose="Personal" onclick="selectPurpose(this)"><i data-lucide="user"></i> Self</div>
+            </div>
+        </div>
+
+        <!-- Cost Calculator -->
+        <div class="cost-calculator">
+            <div class="cost-calc-header">
+                <i data-lucide="indian-rupee"></i>
+                <h3>Trip Cost Estimator</h3>
+            </div>
+            <div class="calc-grid">
+                <div class="calc-field">
+                    <label>Distance (km)</label>
+                    <input type="number" id="calc-distance" placeholder="0" oninput="recalcCost()" min="0">
+                </div>
+                <div class="calc-field">
+                    <label>Days</label>
+                    <input type="number" id="calc-days" placeholder="1" oninput="recalcCost()" min="1" value="1">
+                </div>
+                <div class="calc-field">
+                    <label>People</label>
+                    <input type="number" id="calc-people" placeholder="1" oninput="recalcCost()" min="1" value="1">
+                </div>
+                <div class="calc-field">
+                    <label>Vehicle</label>
+                    <select id="calc-vehicle" onchange="recalcCost()">
+                        <option value="car">🚗 Car</option>
+                        <option value="bike">🏍 Bike</option>
+                        <option value="bus">🚌 Bus</option>
+                        <option value="auto">🛺 Auto</option>
+                        <option value="train">🚆 Train</option>
+                        <option value="flight">✈️ Flight</option>
+                    </select>
+                </div>
+            </div>
+            <div id="cost-breakdown" class="cost-breakdown hidden">
+                <div class="cost-row"><span>⛽ Fuel / Transport</span><span id="c-fuel" class="cost-val">₹0</span></div>
+                <div class="cost-row"><span>🍽 Food & Dining</span><span id="c-food" class="cost-val">₹0</span></div>
+                <div class="cost-row"><span>🏨 Accommodation</span><span id="c-acc" class="cost-val">₹0</span></div>
+                <div class="cost-row"><span>🎭 Misc / Sightseeing</span><span id="c-misc" class="cost-val">₹0</span></div>
+                <div class="cost-total-row">
+                    <span>Total Estimate</span>
+                    <span id="c-total" class="cost-total">₹0</span>
+                </div>
+                <div class="cost-per-person">Per person: <span id="c-pp">₹0</span></div>
+            </div>
+        </div>
+
+        <!-- Suggestions -->
+        <div id="setup-suggestions-card" class="suggestion-card hidden">
+            <div class="sugg-card-header">
+                <h4>🗺 Top spots in <span id="sugg-loc-label">...</span></h4>
+                <span class="sugg-badge" id="sugg-count-badge"></span>
+            </div>
+            <div id="setup-suggestions-list"></div>
+        </div>
+
+        <button class="start-btn" onclick="startTrip()">
+            START ADVENTURE <i data-lucide="chevron-right"></i>
+        </button>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ PLANNER VIEW -->
+<div id="planner-view" class="view hidden">
+    <div class="planner-layout">
+        <aside class="planner-sidebar">
+            <div class="planner-header">
+                <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+                <h2>Trip Planner</h2>
+            </div>
+            
+            <div class="waypoint-list" id="waypoint-inputs">
+                <div class="waypoint-item">
+                    <i data-lucide="map-pin" class="text-blue"></i>
+                    <input type="text" id="p-start" placeholder="Starting location..." onchange="updatePlannerRoute()">
+                    <button class="icon-btn small blue" onclick="detectPlannerLocation(true)" title="Detect Current Location">
+                        <i data-lucide="locate-fixed" style="width:14px;height:14px"></i>
+                    </button>
+                </div>
+                <div id="p-stops"></div>
+                <div class="waypoint-item">
+                    <i data-lucide="navigation" class="text-red"></i>
+                    <input type="text" id="p-end" placeholder="Destination..." onchange="updatePlannerRoute()">
+                </div>
+            </div>
+            
+            <button class="add-stop-btn" onclick="addStopInput()">
+                <i data-lucide="plus-circle"></i> Add Stop
+            </button>
+            
+            <div class="planner-metrics">
+                <div class="metric"><span id="p-dist">0 km</span><label>Distance</label></div>
+                <div class="metric"><span id="p-time">0 min</span><label>Est. Time</label></div>
+                <div class="metric"><span id="p-cost">₹0</span><label>Est. Cost</label></div>
+            </div>
+            
+            <div class="filter-section">
+                <label>Discover Along Route</label>
+                <div class="filter-chips">
+                    <button class="chip active" data-cat="attraction" onclick="toggleFilter(this)">🏛 Historical</button>
+                    <button class="chip active" data-cat="nature" onclick="toggleFilter(this)">🌿 Nature</button>
+                    <button class="chip active" data-cat="food" onclick="toggleFilter(this)">🥘 Food</button>
+                    <button class="chip active" data-cat="essential" onclick="toggleFilter(this)">🏥 Essential</button>
+                </div>
+            </div>
+            
+            <div id="itinerary-summary" class="itinerary-list">
+                <!-- Dynamically populated -->
+            </div>
+            
+            <button class="start-trip-btn" onclick="confirmPlannerTrip()">
+                SAVE & START TRIP <i data-lucide="chevron-right"></i>
+            </button>
+        </aside>
+        
+        <main class="planner-map-area">
+            <div id="planner-map"></div>
+            <div class="map-overlay-top">
+                <div class="route-options">
+                    <button class="opt-btn active" onclick="setRouteProfile('driving')">🚗 Fast</button>
+                    <button class="opt-btn" onclick="setRouteProfile('scenic')">🏞 Scenic</button>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ MAP VIEW (ENHANCED) -->
+<div id="map-view" class="view hidden" style="padding:0;">
+    <div style="position:relative;width:100%;height:100vh;">
+        <div id="map" style="width:100%;height:100%;"></div>
+        <div class="floating-top">
+            <button class="glass-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <div class="trip-badges">
+                <div class="status-badge" id="trip-status-badge">TOUR ACTIVE</div>
+                <div class="dest-badge" id="trip-dest-badge">TO: —</div>
+            </div>
+        </div>
+        <div class="floating-suggestions hidden" id="suggestions-box">
+            <div class="glass-card">
+                <h5>📍 Nearby Spots</h5>
+                <div class="sugg-scroll" id="suggestions-list"></div>
+            </div>
+        </div>
+        <div class="floating-bottom">
+            <button class="round-btn orange" onclick="openQuickNote()"><i data-lucide="edit-3"></i></button>
+            <button class="round-btn blue" onclick="centerMapOnUser()"><i data-lucide="crosshair"></i></button>
+            <button class="round-btn" style="color:#14b8a6" onclick="openExpenseModal(currentTripId)"><i data-lucide="wallet"></i></button>
+            <button class="round-btn purple" onclick="openQuickCamera()"><i data-lucide="camera"></i></button>
+            <button class="end-trip-btn" onclick="endTrip()">END TRIP</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ NOTES VIEW -->
+<div id="notes-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <h2 class="view-title">My Notes</h2>
+            <button class="icon-btn blue" onclick="openNoteEditor()"><i data-lucide="plus"></i></button>
+        </header>
+        <div id="notes-list" class="notes-grid"></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ MEMORIES VIEW -->
+<div id="memories-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <h2 class="view-title">Memories</h2>
+            <button class="icon-btn purple" onclick="openImageUpload()"><i data-lucide="upload"></i></button>
+        </header>
+        <div id="memories-grid" class="memories-grid"></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ HISTORY VIEW -->
+<div id="history-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <h2 class="view-title">Trip History</h2>
+            <div></div>
+        </header>
+        <div id="history-list" class="space-y-4"></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ EXPENSES VIEW -->
+<div id="expenses-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <h2 class="view-title">Expenses</h2>
+            <button class="icon-btn teal" onclick="openExpenseModal()"><i data-lucide="plus"></i></button>
+        </header>
+
+        <!-- Summary bar -->
+        <div class="expense-summary-bar" id="expense-summary-bar">
+            <div class="exp-sum-item">
+                <span class="exp-sum-val" id="exp-total-val">₹0</span>
+                <span class="exp-sum-label">Total Spent</span>
+            </div>
+            <div class="exp-sum-divider"></div>
+            <div class="exp-sum-item">
+                <span class="exp-sum-val" id="exp-food-val">₹0</span>
+                <span class="exp-sum-label">🍽 Food</span>
+            </div>
+            <div class="exp-sum-divider"></div>
+            <div class="exp-sum-item">
+                <span class="exp-sum-val" id="exp-other-val">₹0</span>
+                <span class="exp-sum-label">🛍 Other</span>
+            </div>
+        </div>
+
+        <!-- Trip filter -->
+        <div class="field-group" style="margin-bottom:14px">
+            <label>Filter by Trip</label>
+            <select id="exp-trip-filter" class="text-input" onchange="loadExpenses()">
+                <option value="">All Trips</option>
+            </select>
+        </div>
+
+        <div id="expenses-list"><div class="empty-placeholder">No expenses yet. Tap + to add one!</div></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ TOURIST SPOTS VIEW -->
+<div id="spots-view" class="view hidden">
+    <div class="page-container">
+        <header class="header">
+            <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
+            <h2 class="view-title">Discover Spots</h2>
+            <div></div>
+        </header>
+
+        <div class="field-group">
+            <label>Search Destination</label>
+            <div class="field-wrap">
+                <i data-lucide="search" class="field-icon"></i>
+                <input type="text" id="spots-search-input" class="pl-icon" placeholder="e.g. Ooty, Tamil Nadu" onkeydown="if(event.key==='Enter') searchTouristSpots()">
+                <button class="field-action-btn" onclick="searchTouristSpots()">
+                    <i data-lucide="arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <div id="spots-loading" class="hidden" style="text-align:center;padding:24px;color:var(--sub);">
+            <div class="spots-loader"></div>
+            <p style="margin-top:12px;font-size:0.85rem">Discovering spots...</p>
+        </div>
+
+        <div id="spots-list"><div class="empty-placeholder">Search a destination to discover top tourist spots! 🌏</div></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ NOTE EDITOR MODAL -->
+<div id="note-editor-modal" class="modal hidden">
+    <div class="modal-sheet">
+        <div class="modal-header">
+            <h2 id="note-editor-title">New Note</h2>
+            <button class="icon-btn" onclick="closeNoteEditor()"><i data-lucide="x"></i></button>
+        </div>
+        <input type="hidden" id="editing-note-id" value="">
+        <div class="field-group">
+            <label>Title</label>
+            <input type="text" id="note-title-input" class="text-input" placeholder="Note title...">
+        </div>
+        <div class="field-group">
+            <label>Content</label>
+            <textarea id="note-content-input" class="text-area" placeholder="Write your thoughts..." rows="8"></textarea>
+        </div>
+        <div class="field-group">
+            <label>Link to Trip (optional)</label>
+            <select id="note-trip-select" class="text-input">
+                <option value="">— No Trip —</option>
+            </select>
+        </div>
+        <button class="start-btn" onclick="saveNote()">Save Note <i data-lucide="save"></i></button>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ EXPENSE ADD MODAL -->
+<div id="expense-modal" class="modal hidden">
+    <div class="modal-sheet">
+        <div class="modal-header">
+            <h2>Add Expense</h2>
+            <button class="icon-btn" onclick="closeExpenseModal()"><i data-lucide="x"></i></button>
+        </div>
+        <div class="field-group">
+            <label>Category</label>
+            <div class="expense-cat-grid" id="exp-cat-grid">
+                <div class="exp-cat-chip active" data-cat="Food" onclick="selectExpCat(this)">🍽 Food</div>
+                <div class="exp-cat-chip" data-cat="Transport" onclick="selectExpCat(this)">🚗 Transport</div>
+                <div class="exp-cat-chip" data-cat="Entry Fee" onclick="selectExpCat(this)">🎟 Entry Fee</div>
+                <div class="exp-cat-chip" data-cat="Shopping" onclick="selectExpCat(this)">🛍 Shopping</div>
+                <div class="exp-cat-chip" data-cat="Hotel" onclick="selectExpCat(this)">🏨 Hotel</div>
+                <div class="exp-cat-chip" data-cat="Other" onclick="selectExpCat(this)">💰 Other</div>
+            </div>
+        </div>
+        <div class="field-group">
+            <label>Amount (₹)</label>
+            <div class="field-wrap">
+                <i data-lucide="indian-rupee" class="field-icon"></i>
+                <input type="number" id="exp-amount" class="pl-icon" placeholder="0.00" min="0" step="0.01">
+            </div>
+        </div>
+        <div class="field-group">
+            <label>Description (optional)</label>
+            <input type="text" id="exp-desc" class="text-input" placeholder="e.g. Lunch at local dhaba">
+        </div>
+        <div class="field-group">
+            <label>Link to Trip (optional)</label>
+            <select id="exp-trip-select" class="text-input">
+                <option value="">— No Trip —</option>
+            </select>
+        </div>
+        <button class="start-btn" onclick="saveExpense()">Save Expense <i data-lucide="check"></i></button>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ IMAGE UPLOAD MODAL -->
+<div id="image-upload-modal" class="modal hidden">
+    <div class="modal-sheet">
+        <div class="modal-header">
+            <h2>Add Memory</h2>
+            <button class="icon-btn" onclick="closeImageUpload()"><i data-lucide="x"></i></button>
+        </div>
+        <div class="upload-zone" onclick="document.getElementById('img-file-input').click()">
+            <div id="upload-preview" class="upload-preview-area">
+                <i data-lucide="image-plus"></i>
+                <p>Tap to select photo</p>
+            </div>
+            <input type="file" id="img-file-input" accept="image/*" style="display:none" onchange="onImageSelected(event)">
+        </div>
+        <div class="field-group mt-4">
+            <label>Caption</label>
+            <input type="text" id="img-caption-input" class="text-input" placeholder="What's happening here?">
+        </div>
+        <div class="field-group">
+            <label>Link to Trip (optional)</label>
+            <select id="img-trip-select" class="text-input">
+                <option value="">— No Trip —</option>
+            </select>
+        </div>
+        <button class="start-btn" onclick="saveMemory()">Save Memory <i data-lucide="heart"></i></button>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ IMAGE LIGHTBOX -->
+<div id="lightbox" class="lightbox hidden" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="">
+    <p id="lightbox-caption"></p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ AI ASSISTANT -->
+<div id="ai-panel" class="ai-panel hidden">
+    <div class="ai-header">
+        <div class="ai-title">
+            <div class="ai-avatar"><i data-lucide="sparkles"></i></div>
+            <div>
+                <h3>AI Travel Assistant</h3>
+                <span class="ai-status">Powered by Claude</span>
+            </div>
+        </div>
+        <button class="icon-btn" onclick="closeAIAssistant()"><i data-lucide="x"></i></button>
+    </div>
+    <div id="ai-messages" class="ai-messages">
+        <div class="ai-msg ai">
+            <p>Namaste! 🙏 I'm your AI travel assistant. Ask me anything about destinations in India, travel tips, packing lists, local food, or anything travel-related!</p>
+        </div>
+    </div>
+    <div class="ai-input-row">
+        <input type="text" id="ai-input" placeholder="Ask me anything..." onkeydown="if(event.key==='Enter') sendAIMessage()">
+        <button class="ai-send-btn" onclick="sendAIMessage()"><i data-lucide="send"></i></button>
+    </div>
+</div>
+<div id="ai-overlay" class="ai-overlay hidden" onclick="closeAIAssistant()"></div>
+
+<!-- ═══════════════════════════════════════════════════════ TOAST -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
