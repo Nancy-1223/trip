@@ -1,0 +1,7 @@
+com.tripmate.app-pngs-0 C:\Users\nann6\Downloads\trip\app\build\generated\res\pngs\debug
+com.tripmate.app-resValues-1 C:\Users\nann6\Downloads\trip\app\build\generated\res\resValues\debug
+com.tripmate.app-packageDebugResources-2 C:\Users\nann6\Downloads\trip\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.tripmate.app-packageDebugResources-3 C:\Users\nann6\Downloads\trip\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.tripmate.app-debug-4 C:\Users\nann6\Downloads\trip\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.tripmate.app-debug-5 C:\Users\nann6\Downloads\trip\app\src\debug\res
+com.tripmate.app-main-6 C:\Users\nann6\Downloads\trip\app\src\main\res

@@ -1,0 +1,72 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.tripmate.app"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="23"
+9        android:targetSdkVersion="35" />
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:3:5-67
+11-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:3:22-64
+12    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+12-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:4:5-79
+12-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:4:22-76
+13    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+13-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:5:5-81
+13-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:5:22-78
+14    <uses-permission
+14-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:6:5-107
+15        android:name="android.permission.READ_EXTERNAL_STORAGE"
+15-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:6:22-77
+16        android:maxSdkVersion="32" />
+16-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:6:78-104
+17    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+17-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:7:5-76
+17-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:7:22-73
+18    <uses-permission android:name="android.permission.CAMERA" />
+18-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:8:5-65
+18-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:8:22-62
+19
+20    <application
+20-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:10:5-28:19
+21        android:allowBackup="true"
+21-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:11:9-35
+22        android:debuggable="true"
+23        android:extractNativeLibs="false"
+24        android:icon="@mipmap/ic_launcher"
+24-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:12:9-43
+25        android:label="TripMate"
+25-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:13:9-33
+26        android:roundIcon="@mipmap/ic_launcher_round"
+26-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:14:9-54
+27        android:supportsRtl="true"
+27-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:15:9-35
+28        android:theme="@style/AppTheme"
+28-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:17:9-40
+29        android:usesCleartextTraffic="true" >
+29-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:16:9-44
+30        <activity
+30-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:18:9-27:20
+31            android:name="com.tripmate.app.MainActivity"
+31-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:19:13-41
+32            android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+32-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:20:13-83
+33            android:exported="true" >
+33-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:21:13-36
+34            <intent-filter>
+34-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:22:13-26:29
+35                <action android:name="android.intent.action.MAIN" />
+35-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:23:17-69
+35-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:23:25-66
+36
+37                <category android:name="android.intent.category.LAUNCHER" />
+37-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:25:17-77
+37-->C:\Users\nann6\Downloads\trip\app\src\main\AndroidManifest.xml:25:27-74
+38            </intent-filter>
+39        </activity>
+40    </application>
+41
+42</manifest>

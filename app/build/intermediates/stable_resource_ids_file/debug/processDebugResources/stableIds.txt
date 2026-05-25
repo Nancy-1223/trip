@@ -1,0 +1,5 @@
+com.tripmate.app:mipmap/ic_launcher_foreground = 0x7f020001
+com.tripmate.app:mipmap/ic_launcher = 0x7f020000
+com.tripmate.app:style/AppTheme = 0x7f030000
+com.tripmate.app:mipmap/ic_launcher_round = 0x7f020002
+com.tripmate.app:color/ic_launcher_background = 0x7f010000
