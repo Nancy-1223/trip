@@ -273,7 +273,7 @@ function onDestChange() {
                 }
             } catch (err) {
                 console.error("Error calculating distance:", err);
-                showToast('Could not calculate route for this destination.');
+                showToast('Route not available');
             }
         }
     }, 1200);
@@ -349,7 +349,7 @@ async function recalcCost() {
 async function startTrip() {
     const dest = document.getElementById('destination-input').value.trim();
     const start = document.getElementById('start-point-input').value.trim();
-    if (!dest) { showToast('Enter a destination first!'); return; }
+    if (!dest) { showToast('Enter a destination'); return; }
 
     const totalText = document.getElementById('c-total')?.textContent || '0';
     const totalNum = parseFloat(totalText.replace(/[^0-9.]/g, '')) || 0;
@@ -361,6 +361,7 @@ async function startTrip() {
     activeDestinationName = dest;
     initMap();
     startLiveLocationWatch(dest);
+    await drawRouteToDestination(dest);
     if (tripPurpose === 'Tour') addTouristSpotMarkersForDestination(dest);
 
     try {
@@ -390,7 +391,7 @@ function initMap() {
     map = L.map('map', { zoomControl: false }).setView(FALLBACK_LATLNG, 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
     mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
-    routePolyline = L.polyline([], { color: '#16a34a', weight: 6, opacity: 0.85 }).addTo(map);
+    routePolyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(map);
     mapMarker = L.marker(FALLBACK_LATLNG);
     setTimeout(() => map.invalidateSize(), 150);
 }
@@ -578,7 +579,10 @@ async function geocodeDestination(destination) {
 async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
     const source = getValidLatLng({ lat: sourceLatLng?.[0], lng: sourceLatLng?.[1] });
     const destination = getValidLatLng({ lat: destinationLatLng?.[0], lng: destinationLatLng?.[1] });
-    if (!source || !destination) return null;
+    if (!source || !destination) {
+        console.error('[TripMate] Invalid route endpoints:', { sourceLatLng, destinationLatLng });
+        return null;
+    }
 
     const url = `https://router.project-osrm.org/route/v1/driving/${source[1]},${source[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
     console.log('[TripMate] Current GPS:', currentLat, currentLng);
@@ -586,19 +590,28 @@ async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
     console.log('[TripMate] OSRM route URL:', url);
     const routeRes = await fetch(url);
     console.log('[TripMate] OSRM response status:', routeRes.status, routeRes.statusText);
-    if (!routeRes.ok) throw new Error('Route request failed');
+    if (!routeRes.ok) throw new Error(`Route request failed: ${routeRes.status}`);
 
     const routeData = await routeRes.json();
     console.log('[TripMate] OSRM response:', routeData);
+    if (routeData?.code && routeData.code !== 'Ok') {
+        throw new Error(`OSRM returned ${routeData.code}`);
+    }
     const route = routeData?.routes?.[0];
     const coords = route?.geometry?.coordinates;
-    if (!Array.isArray(coords) || coords.length < 2) return null;
+    if (!Array.isArray(coords) || coords.length < 2) {
+        console.error('[TripMate] OSRM route has no drawable geometry:', routeData);
+        return null;
+    }
 
     const latLngs = coords
         .map(coord => [Number(coord[1]), Number(coord[0])])
         .filter(coord => getValidLatLng({ lat: coord[0], lng: coord[1] }));
 
-    if (latLngs.length < 2) return null;
+    if (latLngs.length < 2) {
+        console.error('[TripMate] OSRM coordinates were invalid after parsing:', coords);
+        return null;
+    }
 
     return {
         distance: Number(route.distance) || 0,
@@ -616,6 +629,12 @@ function drawRoutePolyline(routeLatLngs, destinationLatLng) {
         return false;
     }
 
+    if (!routePolyline) {
+        routePolyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.9 });
+    }
+    if (!map.hasLayer(routePolyline)) {
+        routePolyline.addTo(map);
+    }
     routePolyline.setLatLngs(routeLatLngs);
 
     const validDestination = getValidLatLng({ lat: destinationLatLng?.[0], lng: destinationLatLng?.[1] });
@@ -623,31 +642,43 @@ function drawRoutePolyline(routeLatLngs, destinationLatLng) {
         routeDestinationMarker = L.marker(validDestination).addTo(map).bindPopup('Destination');
     }
 
-    map.fitBounds(routePolyline.getBounds(), { padding: [46, 46], maxZoom: 15 });
+    const boundsPoints = [...routeLatLngs];
+    const routeStart = getRouteStartLatLng();
+    if (routeStart) boundsPoints.push(routeStart);
+    if (validDestination) boundsPoints.push(validDestination);
+    map.fitBounds(L.latLngBounds(boundsPoints), { padding: [46, 46], maxZoom: 15 });
     setTimeout(() => map.invalidateSize(), 150);
     return true;
 }
 
 async function drawRouteToDestination(destinationName) {
+    const destinationText = String(destinationName || '').trim();
     const routeStart = getRouteStartLatLng();
-    if (!map || !destinationName) return;
+    if (!map) initMap();
+    if (!destinationText) {
+        showToast('Enter a destination');
+        return;
+    }
+    console.log('[TripMate] Destination text:', destinationText);
+    console.log('[TripMate] Current GPS before route:', currentLat, currentLng);
     if (!routeStart) {
         showToast('Waiting for live GPS location...');
         return;
     }
 
     try {
-        const destinationLatLng = await geocodeDestination(destinationName);
+        const destinationLatLng = await geocodeDestination(destinationText);
         if (!destinationLatLng) {
             clearRoutePolyline();
-            showToast(`Destination location not found: ${destinationName}`);
+            showToast(`Destination location not found: ${destinationText}`);
             return;
         }
+        console.log('[TripMate] Geocoded coordinates:', destinationLatLng[0], destinationLatLng[1]);
 
         const route = await fetchRouteGeometry(routeStart, destinationLatLng);
         if (!route || !route.latLngs.length) {
             clearRoutePolyline();
-            showToast('Could not find a driving route to this destination.');
+            showToast('Route not available');
             return;
         }
 
@@ -655,7 +686,7 @@ async function drawRouteToDestination(destinationName) {
     } catch (err) {
         console.error('Routing failed:', err);
         clearRoutePolyline();
-        showToast('Route could not be loaded. Check your connection and try again.');
+        showToast('Route not available');
     }
 }
 
