@@ -2,10 +2,16 @@
 lucide.createIcons();
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let map, mapMarker, mapPolyline;
+let map, mapMarker, mapPolyline, routePolyline, routeDestinationMarker;
+let touristSpotMarkers = [];
 let pathData = [], watchId = null, currentTripId = null;
 let tripPurpose = 'Tour';
+const FALLBACK_LATLNG = [20.5937, 78.9629];
 let userCurrentLatLng = null;
+let currentLat = null, currentLng = null;
+let gpsLocationReady = false;
+let gpsAlertShown = false;
+let activeDestinationName = '';
 let allTrips = [];
 let selectedImageData = null;
 
@@ -159,6 +165,8 @@ function detectLocation() {
     iconWrap.innerHTML = '<i data-lucide="loader-2" class="spin text-blue" style="width:18px;height:18px"></i>';
     detectWrap.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:18px;height:18px"></i>';
     lucide.createIcons();
+    startLiveLocationWatch();
+    return;
     if (!navigator.geolocation) { input.value = 'GPS not supported'; return; }
     navigator.geolocation.getCurrentPosition(
         async pos => {
@@ -197,7 +205,7 @@ function onStartChange() {
                 const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(start)}`);
                 const geoData = await geoRes.json();
                 if (geoData && geoData.length > 0) {
-                    userCurrentLatLng = [parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)];
+                    if (!gpsLocationReady) userCurrentLatLng = [parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)];
                     iconWrap.innerHTML = '<i data-lucide="check-circle" style="color:#22c55e;width:18px;height:18px"></i>';
                     lucide.createIcons();
                     // recalculate distance if destination is also present
@@ -224,12 +232,15 @@ function selectPurpose(el) {
 let destTimeout;
 function onDestChange() {
     updateSetupSuggestions();
+    activeDestinationName = document.getElementById('destination-input').value.trim();
+    startLiveLocationWatch();
     
     // Auto-calculate distance
     clearTimeout(destTimeout);
     destTimeout = setTimeout(async () => {
         const dest = document.getElementById('destination-input').value.trim();
-        if (dest.length > 2 && userCurrentLatLng) {
+        const routeStart = getRouteStartLatLng();
+        if (dest.length > 2 && routeStart) {
             try {
                 const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(dest)}`);
                 const geoData = await geoRes.json();
@@ -238,19 +249,15 @@ function onDestChange() {
                     const destLat = parseFloat(geoData[0].lat);
                     const destLon = parseFloat(geoData[0].lon);
                     
-                    let distKM = 0;
-                    try {
-                        const routeRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${userCurrentLatLng[1]},${userCurrentLatLng[0]};${destLon},${destLat}?overview=false`);
-                        const routeData = await routeRes.json();
-                        if (routeData && routeData.routes && routeData.routes.length > 0) {
-                            distKM = Math.round(routeData.routes[0].distance / 100) / 10;
-                        }
-                    } catch (e) {
-                        console.warn('Routing failed, using straight-line distance');
-                    }
+                    const route = await fetchRouteGeometry(routeStart, [destLat, destLon]);
+                    let distKM = route ? Math.round(route.distance / 100) / 10 : 0;
                     
                     if (distKM === 0) {
-                        distKM = calcPathDistance([userCurrentLatLng, [destLat, destLon]]);
+                        distKM = calcPathDistance([routeStart, [destLat, destLon]]);
+                    }
+
+                    if (map && route) {
+                        drawRoutePolyline(route.latLngs, [destLat, destLon]);
                     }
                     
                     if (distKM > 0) {
@@ -345,7 +352,10 @@ async function startTrip() {
     showView('map-view');
     document.getElementById('trip-status-badge').textContent = `${tripPurpose.toUpperCase()} ACTIVE`;
     document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
+    activeDestinationName = dest;
     initMap();
+    startLiveLocationWatch(dest);
+    if (tripPurpose === 'Tour') addTouristSpotMarkersForDestination(dest);
 
     try {
         const res = await fetch('/api/trips', {
@@ -366,33 +376,261 @@ async function startTrip() {
         const data = await res.json();
         currentTripId = data.trip_id;
     } catch (err) { console.error(err); }
-
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(pos => {
-            userCurrentLatLng = [pos.coords.latitude, pos.coords.longitude];
-            map.setView(userCurrentLatLng, 15);
-            mapMarker.setLatLng(userCurrentLatLng);
-        }, () => {});
-        watchId = navigator.geolocation.watchPosition(pos => {
-            const latlng = [pos.coords.latitude, pos.coords.longitude];
-            userCurrentLatLng = latlng;
-            map.panTo(latlng);
-            mapMarker.setLatLng(latlng);
-            pathData.push(latlng);
-            mapPolyline.setLatLngs(pathData);
-            if (tripPurpose === 'Tour') fetchLiveSuggestions(pos.coords.latitude, pos.coords.longitude);
-        }, () => {}, { enableHighAccuracy: true });
-    }
 }
 
 // ─── Map ──────────────────────────────────────────────────────────────────────
 function initMap() {
     if (map) { setTimeout(() => map.invalidateSize(), 150); return; }
-    map = L.map('map', { zoomControl: false }).setView([20.5937, 78.9629], 5);
+    map = L.map('map', { zoomControl: false }).setView(FALLBACK_LATLNG, 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
     mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
-    mapMarker = L.marker([20.5937, 78.9629]).addTo(map);
+    routePolyline = L.polyline([], { color: '#16a34a', weight: 6, opacity: 0.85 }).addTo(map);
+    mapMarker = L.marker(FALLBACK_LATLNG);
     setTimeout(() => map.invalidateSize(), 150);
+}
+
+function getRouteStartLatLng() {
+    if (gpsLocationReady && currentLat !== null && currentLng !== null) return [currentLat, currentLng];
+    return userCurrentLatLng;
+}
+
+function updateCurrentLocationMarker(latLng, shouldCenter = true) {
+    if (!map) initMap();
+    if (!mapMarker) mapMarker = L.marker(latLng);
+    mapMarker.setLatLng(latLng);
+    if (!map.hasLayer(mapMarker)) mapMarker.addTo(map);
+    if (shouldCenter) map.setView(latLng, 16);
+}
+
+async function updateDetectedLocationInput(latLng) {
+    const input = document.getElementById('start-point-input');
+    const iconWrap = document.getElementById('start-icon-wrap');
+    const detectWrap = document.getElementById('detect-icon-wrap');
+    if (!input) return;
+
+    let name = `${latLng[0].toFixed(3)}, ${latLng[1].toFixed(3)}`;
+    try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latLng[0]}&lon=${latLng[1]}`);
+        const d = await r.json();
+        if (d.address) name = d.address.city || d.address.town || d.address.village || d.address.suburb || name;
+    } catch {}
+
+    input.value = `Live: ${name}`;
+    if (iconWrap) iconWrap.innerHTML = '<i data-lucide="check-circle" style="color:#22c55e;width:18px;height:18px"></i>';
+    if (detectWrap) detectWrap.innerHTML = '<i data-lucide="crosshair" style="width:18px;height:18px"></i>';
+    lucide.createIcons();
+}
+
+function handleGpsFailure() {
+    if (!gpsAlertShown) {
+        alert('Please enable GPS/location permission');
+        gpsAlertShown = true;
+    }
+
+    if (!userCurrentLatLng) userCurrentLatLng = FALLBACK_LATLNG;
+    updateCurrentLocationMarker(userCurrentLatLng, true);
+
+    const input = document.getElementById('start-point-input');
+    const iconWrap = document.getElementById('start-icon-wrap');
+    const detectWrap = document.getElementById('detect-icon-wrap');
+    if (input) input.value = 'GPS Unavailable';
+    if (iconWrap) iconWrap.innerHTML = '<i data-lucide="alert-circle" style="color:#ef4444;width:18px;height:18px"></i>';
+    if (detectWrap) detectWrap.innerHTML = '<i data-lucide="crosshair" style="width:18px;height:18px"></i>';
+    lucide.createIcons();
+}
+
+function startLiveLocationWatch(destinationName = activeDestinationName) {
+    if (destinationName) activeDestinationName = destinationName;
+
+    if (!navigator.geolocation) {
+        handleGpsFailure();
+        return;
+    }
+
+    if (watchId !== null) {
+        if (gpsLocationReady && activeDestinationName) drawRouteToDestination(activeDestinationName);
+        return;
+    }
+
+    watchId = navigator.geolocation.watchPosition(
+        pos => {
+            currentLat = pos.coords.latitude;
+            currentLng = pos.coords.longitude;
+            const latLng = [currentLat, currentLng];
+            gpsLocationReady = true;
+            userCurrentLatLng = latLng;
+
+            updateCurrentLocationMarker(latLng, true);
+            updateDetectedLocationInput(latLng);
+
+            pathData.push(latLng);
+            if (mapPolyline) mapPolyline.setLatLngs(pathData);
+            if (activeDestinationName) drawRouteToDestination(activeDestinationName);
+            if (tripPurpose === 'Tour') fetchLiveSuggestions(currentLat, currentLng);
+        },
+        err => {
+            console.warn('GPS error:', err);
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            handleGpsFailure();
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+}
+
+function clearRoutePolyline() {
+    if (routePolyline) routePolyline.setLatLngs([]);
+    if (map && routeDestinationMarker) {
+        map.removeLayer(routeDestinationMarker);
+        routeDestinationMarker = null;
+    }
+}
+
+async function geocodeDestination(destination) {
+    if (!destination) return null;
+
+    const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destination)}&limit=1`);
+    if (!geoRes.ok) throw new Error('Destination geocoding failed');
+
+    const geoData = await geoRes.json();
+    if (!geoData || !geoData.length) return null;
+
+    return [parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)];
+}
+
+async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
+    const source = getValidLatLng({ lat: sourceLatLng?.[0], lng: sourceLatLng?.[1] });
+    const destination = getValidLatLng({ lat: destinationLatLng?.[0], lng: destinationLatLng?.[1] });
+    if (!source || !destination) return null;
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${source[1]},${source[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
+    const routeRes = await fetch(url);
+    if (!routeRes.ok) throw new Error('Route request failed');
+
+    const routeData = await routeRes.json();
+    const route = routeData?.routes?.[0];
+    const coords = route?.geometry?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+
+    const latLngs = coords
+        .map(coord => [Number(coord[1]), Number(coord[0])])
+        .filter(coord => getValidLatLng({ lat: coord[0], lng: coord[1] }));
+
+    if (latLngs.length < 2) return null;
+
+    return {
+        distance: Number(route.distance) || 0,
+        duration: Number(route.duration) || 0,
+        latLngs
+    };
+}
+
+function drawRoutePolyline(routeLatLngs, destinationLatLng) {
+    if (!map) initMap();
+    clearRoutePolyline();
+
+    if (!Array.isArray(routeLatLngs) || routeLatLngs.length < 2) {
+        showToast('Route path is unavailable for this destination.');
+        return false;
+    }
+
+    routePolyline.setLatLngs(routeLatLngs);
+
+    const validDestination = getValidLatLng({ lat: destinationLatLng?.[0], lng: destinationLatLng?.[1] });
+    if (validDestination) {
+        routeDestinationMarker = L.marker(validDestination).addTo(map).bindPopup('Destination');
+    }
+
+    map.fitBounds(routePolyline.getBounds(), { padding: [46, 46], maxZoom: 15 });
+    setTimeout(() => map.invalidateSize(), 150);
+    return true;
+}
+
+async function drawRouteToDestination(destinationName) {
+    const routeStart = getRouteStartLatLng();
+    if (!map || !routeStart || !destinationName) return;
+
+    try {
+        const destinationLatLng = await geocodeDestination(destinationName);
+        if (!destinationLatLng) {
+            clearRoutePolyline();
+            showToast('Destination location not found.');
+            return;
+        }
+
+        const route = await fetchRouteGeometry(routeStart, destinationLatLng);
+        if (!route || !route.latLngs.length) {
+            clearRoutePolyline();
+            showToast('Could not find a driving route to this destination.');
+            return;
+        }
+
+        drawRoutePolyline(route.latLngs, destinationLatLng);
+    } catch (err) {
+        console.error('Routing failed:', err);
+        clearRoutePolyline();
+        showToast('Route could not be loaded. Check your connection and try again.');
+    }
+}
+
+function clearTouristSpotMarkers() {
+    touristSpotMarkers.forEach(marker => {
+        if (map && marker) map.removeLayer(marker);
+    });
+    touristSpotMarkers = [];
+}
+
+function getValidLatLng(place) {
+    const lat = Number(place?.lat);
+    const lng = Number(place?.lng ?? place?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return [lat, lng];
+}
+
+function addTouristSpotMarkers(spots, destination = '') {
+    if (!map) initMap();
+    clearTouristSpotMarkers();
+
+    const boundsPoints = [];
+    (spots || []).forEach(spot => {
+        const latLng = getValidLatLng(spot);
+        if (!latLng) return;
+
+        const icon = getPlaceIcon(spot.type || 'attraction');
+        const marker = L.marker(latLng, { icon }).addTo(map)
+            .bindPopup(`<strong>${escHtml(spot.name || 'Tourist spot')}</strong>${spot.description ? `<br>${escHtml(spot.description)}` : ''}`);
+        touristSpotMarkers.push(marker);
+        boundsPoints.push(latLng);
+    });
+
+    if (boundsPoints.length) {
+        map.fitBounds(L.latLngBounds(boundsPoints), { padding: [42, 42], maxZoom: 15 });
+    } else if (destination) {
+        showToast(`No mappable tourist spots found for ${destination}.`);
+    }
+
+    setTimeout(() => map.invalidateSize(), 150);
+    return boundsPoints.length;
+}
+
+async function addTouristSpotMarkersForDestination(destination) {
+    if (!destination) return 0;
+    try {
+        const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(destination)}`);
+        const spots = await res.json();
+        if (!Array.isArray(spots) || !spots.length) {
+            clearTouristSpotMarkers();
+            showToast(`No tourist spots found for ${destination}.`);
+            return 0;
+        }
+        return addTouristSpotMarkers(spots, destination);
+    } catch {
+        showToast('Could not load tourist spots for this destination.');
+        return 0;
+    }
 }
 
 function centerMapOnUser() {
@@ -409,12 +647,15 @@ async function fetchLiveSuggestions(lat, lng) {
         document.getElementById('suggestions-list').innerHTML = places.map(p =>
             `<div class="sugg-chip" onclick="centerMapOnPlace(${p.lat}, ${p.lng})">📍 ${p.name}</div>`
         ).join('');
-        
+
+        clearTouristSpotMarkers();
         places.forEach(p => {
-            if(p.lat && p.lng) {
+            const latLng = getValidLatLng(p);
+            if(latLng) {
                 const icon = getPlaceIcon(p.type);
-                L.marker([p.lat, p.lng], { icon }).addTo(map)
+                const marker = L.marker(latLng, { icon }).addTo(map)
                  .bindPopup(`<strong>${p.name}</strong><br>${p.description}`);
+                touristSpotMarkers.push(marker);
             }
         });
     } catch {}
@@ -453,8 +694,9 @@ async function endTrip() {
             });
         } catch {}
     }
-    pathData = []; currentTripId = null;
+    pathData = []; currentTripId = null; activeDestinationName = '';
     if (mapPolyline) mapPolyline.setLatLngs([]);
+    clearRoutePolyline();
     // Always re-fetch trips so history and dashboard are up-to-date
     await loadTrips();
     showView('dashboard-view');
@@ -1034,9 +1276,12 @@ async function searchTouristSpots() {
         loading.classList.add('hidden');
 
         if (!spots.length) {
+            clearTouristSpotMarkers();
             list.innerHTML = '<div class="empty-placeholder">No tourist spots found. Try a nearby city name! 🗺</div>';
             return;
         }
+
+        addTouristSpotMarkers(spots, dest);
 
         const typeEmoji = { attraction:'🏛', museum:'🏛', viewpoint:'👁', historic:'🏯', park:'🌿', temple:'🛕' };
         const typeLabel = { attraction:'Attraction', museum:'Museum', viewpoint:'Viewpoint', historic:'Heritage', park:'Park', temple:'Temple' };
@@ -1070,8 +1315,23 @@ async function searchTouristSpots() {
 }
 
 function viewSpotOnMap(lat, lng, name) {
-    // Open in a new tab to OpenStreetMap
-    window.open(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`, '_blank');
+    const latLng = getValidLatLng({ lat, lng });
+    if (!latLng) {
+        showToast('Map coordinates are unavailable for this spot.');
+        return;
+    }
+
+    showView('map-view');
+    initMap();
+    document.getElementById('trip-status-badge').textContent = 'TOURIST SPOT';
+    document.getElementById('trip-dest-badge').textContent = `TO: ${name || 'Selected place'}`;
+    if (!touristSpotMarkers.length) {
+        addTouristSpotMarkers([{ name, lat, lng, type: 'attraction' }]);
+    }
+    setTimeout(() => {
+        map.invalidateSize();
+        map.setView(latLng, 16);
+    }, 150);
 }
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────

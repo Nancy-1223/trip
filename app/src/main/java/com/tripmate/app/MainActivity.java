@@ -19,6 +19,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class MainActivity extends Activity {
     private static final String TRIPMATE_URL = "https://trip-y62q.onrender.com";
     private static final int REQUEST_APP_PERMISSIONS = 10;
@@ -29,6 +32,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePathCallback;
     private GeolocationPermissions.Callback geolocationCallback;
     private String geolocationOrigin;
+    private Bundle pendingWebViewState;
+    private boolean webViewLoaded;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -110,30 +115,54 @@ public class MainActivity extends Activity {
         }
 
         setContentView(webView);
-        requestInitialPermissions();
-
-        if (savedInstanceState == null) {
-            webView.loadUrl(TRIPMATE_URL);
-        } else {
-            webView.restoreState(savedInstanceState);
+        pendingWebViewState = savedInstanceState;
+        if (!requestInitialPermissions()) {
+            loadTripMate();
         }
     }
 
-    private void requestInitialPermissions() {
+    private boolean requestInitialPermissions() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return;
+            return false;
         }
 
         String mediaPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 ? Manifest.permission.READ_MEDIA_IMAGES
                 : Manifest.permission.READ_EXTERNAL_STORAGE;
 
-        requestPermissions(new String[] {
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                mediaPermission,
-                Manifest.permission.CAMERA
-        }, REQUEST_APP_PERMISSIONS);
+        List<String> permissions = new ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        }
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
+        if (checkSelfPermission(mediaPermission) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(mediaPermission);
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.CAMERA);
+        }
+
+        if (permissions.isEmpty()) {
+            return false;
+        }
+
+        requestPermissions(permissions.toArray(new String[0]), REQUEST_APP_PERMISSIONS);
+        return true;
+    }
+
+    private void loadTripMate() {
+        if (webViewLoaded) {
+            return;
+        }
+        webViewLoaded = true;
+
+        if (pendingWebViewState == null) {
+            webView.loadUrl(TRIPMATE_URL);
+        } else {
+            webView.restoreState(pendingWebViewState);
+        }
     }
 
     private boolean hasLocationPermission() {
@@ -148,10 +177,15 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
-        if (requestCode == REQUEST_GEOLOCATION_PERMISSION && geolocationCallback != null) {
+        if ((requestCode == REQUEST_GEOLOCATION_PERMISSION || requestCode == REQUEST_APP_PERMISSIONS)
+                && geolocationCallback != null) {
             geolocationCallback.invoke(geolocationOrigin, hasLocationPermission(), false);
             geolocationCallback = null;
             geolocationOrigin = null;
+        }
+
+        if (requestCode == REQUEST_APP_PERMISSIONS) {
+            loadTripMate();
         }
     }
 
