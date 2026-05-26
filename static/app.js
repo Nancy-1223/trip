@@ -12,6 +12,9 @@ let currentLat = null, currentLng = null;
 let gpsLocationReady = false;
 let gpsAlertShown = false;
 let activeDestinationName = '';
+let plannerLastStartLatLng = null;
+let plannerLastDestinationLatLng = null;
+let plannerLastRouteGeometry = null;
 let allTrips = [];
 let selectedImageData = null;
 
@@ -91,6 +94,9 @@ function showView(viewId) {
     const v = document.getElementById(viewId);
     v.classList.remove('hidden');
     v.classList.add('active-view');
+    if (viewId === 'map-view') {
+        setTimeout(restoreActiveTripFromStorage, 100);
+    }
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -509,6 +515,76 @@ function clearRoutePolyline() {
     if (map && routeDestinationMarker) {
         map.removeLayer(routeDestinationMarker);
         routeDestinationMarker = null;
+    }
+}
+
+function saveActiveTripToStorage(data) {
+    Object.entries(data).forEach(([key, value]) => {
+        if (value === null || value === undefined || value === '') return;
+        sessionStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+    });
+}
+
+function readStoredNumber(key) {
+    const value = sessionStorage.getItem(key);
+    if (value === null) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readStoredGeometry(key) {
+    try {
+        const value = sessionStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+    } catch {
+        return null;
+    }
+}
+
+async function restoreActiveTripFromStorage() {
+    if (!document.getElementById('map-view')?.classList.contains('active-view')) return;
+
+    const storedDestination = sessionStorage.getItem('activeDestinationName') || activeDestinationName;
+    if (!storedDestination) return;
+
+    const destLat = readStoredNumber('activeDestinationLat');
+    const destLng = readStoredNumber('activeDestinationLng');
+    const startLat = readStoredNumber('activeStartLat');
+    const startLng = readStoredNumber('activeStartLng');
+    const routeGeometry = readStoredGeometry('activeRouteGeometry');
+    const destinationLatLng = getValidLatLng({ lat: destLat, lng: destLng });
+    const startLatLng = getValidLatLng({ lat: startLat, lng: startLng });
+
+    activeDestinationName = storedDestination;
+    document.getElementById('trip-status-badge').textContent = 'TOUR ACTIVE';
+    document.getElementById('trip-dest-badge').textContent = `TO: ${storedDestination}`;
+    initMap();
+
+    if (startLatLng && !gpsLocationReady) {
+        userCurrentLatLng = startLatLng;
+        updateCurrentLocationMarker(startLatLng, true);
+    }
+
+    const validRouteGeometry = Array.isArray(routeGeometry)
+        ? routeGeometry.map(p => getValidLatLng({ lat: p?.[0], lng: p?.[1] })).filter(Boolean)
+        : [];
+
+    if (destinationLatLng && validRouteGeometry.length >= 2) {
+        drawRoutePolyline(validRouteGeometry, destinationLatLng);
+        return;
+    }
+
+    if (destinationLatLng && startLatLng) {
+        try {
+            const route = await fetchRouteGeometry(startLatLng, destinationLatLng);
+            if (route?.latLngs?.length) {
+                saveActiveTripToStorage({ activeRouteGeometry: route.latLngs });
+                drawRoutePolyline(route.latLngs, destinationLatLng);
+            }
+        } catch (err) {
+            console.error('[TripMate] Failed to restore active route:', err);
+            showToast('Route not available');
+        }
     }
 }
 
@@ -1102,6 +1178,7 @@ function initPlannerMap() {
         const summary = routes[0].summary;
         const distKM = summary.totalDistance / 1000;
         const timeMin = Math.round(summary.totalTime / 60);
+        plannerLastRouteGeometry = routes[0].coordinates.map(c => [c.lat, c.lng]);
         
         document.getElementById('p-dist').textContent = distKM.toFixed(1) + ' km';
         document.getElementById('p-time').textContent = timeMin + ' min';
@@ -1153,6 +1230,8 @@ async function updatePlannerRoute() {
     }
 
     if (waypoints.length >= 2) {
+        plannerLastStartLatLng = [waypoints[0].lat, waypoints[0].lng];
+        plannerLastDestinationLatLng = [waypoints[waypoints.length - 1].lat, waypoints[waypoints.length - 1].lng];
         plannerRoutingControl.setWaypoints(waypoints);
         const bounds = L.latLngBounds(waypoints);
         plannerMap.fitBounds(bounds, { padding: [50, 50] });
@@ -1223,6 +1302,34 @@ async function confirmPlannerTrip() {
     const totalNum = parseFloat(costText.replace(/[^0-9.]/g, '')) || 0;
 
     if (!dest || distance === 0) { showToast('Plan a valid route first!'); return; }
+    await updatePlannerRoute();
+
+    if (!plannerLastDestinationLatLng) {
+        const destinationLatLng = await geocodeDestination(dest);
+        if (!destinationLatLng) { showToast(`Destination location not found: ${dest}`); return; }
+        plannerLastDestinationLatLng = destinationLatLng;
+    }
+
+    const activeStartLatLng = getRouteStartLatLng() || plannerLastStartLatLng;
+    if (!activeStartLatLng) { showToast('Waiting for live GPS location...'); return; }
+
+    if (!plannerLastRouteGeometry || plannerLastRouteGeometry.length < 2) {
+        try {
+            const route = await fetchRouteGeometry(activeStartLatLng, plannerLastDestinationLatLng);
+            plannerLastRouteGeometry = route?.latLngs || null;
+        } catch (err) {
+            console.error('[TripMate] Planner route handoff failed:', err);
+        }
+    }
+
+    saveActiveTripToStorage({
+        activeDestinationName: dest,
+        activeDestinationLat: plannerLastDestinationLatLng[0],
+        activeDestinationLng: plannerLastDestinationLatLng[1],
+        activeStartLat: activeStartLatLng[0],
+        activeStartLng: activeStartLatLng[1],
+        activeRouteGeometry: plannerLastRouteGeometry
+    });
 
     try {
         const res = await fetch('/api/trips', {
@@ -1241,10 +1348,11 @@ async function confirmPlannerTrip() {
         
         showToast('Trip Saved! Starting navigation...');
         showView('map-view');
+        document.getElementById('trip-status-badge').textContent = 'TOUR ACTIVE';
+        document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
+        activeDestinationName = dest;
         initMap();
-        
-        // Populate tracking with planned start
-        updatePlannerRoute(); // Ensure latest
+        await restoreActiveTripFromStorage();
     } catch { showToast('Error saving trip.'); }
 }
 
