@@ -3,9 +3,13 @@ package com.tripmate.app;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -34,6 +38,9 @@ public class MainActivity extends Activity {
     private String geolocationOrigin;
     private Bundle pendingWebViewState;
     private boolean webViewLoaded;
+    private LocationManager locationManager;
+    private LocationListener locationListener;
+    private Location lastNativeLocation;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -58,6 +65,11 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                sendLocationToWebView(lastNativeLocation);
             }
         });
         webView.setWebChromeClient(new WebChromeClient() {
@@ -115,10 +127,34 @@ public class MainActivity extends Activity {
         }
 
         setContentView(webView);
+        setupNativeLocationBridge();
         pendingWebViewState = savedInstanceState;
         if (!requestInitialPermissions()) {
             loadTripMate();
+            startNativeLocationUpdates();
         }
+    }
+
+    private void setupNativeLocationBridge() {
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        locationListener = new LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+                sendLocationToWebView(location);
+            }
+
+            @Override
+            public void onProviderEnabled(String provider) {
+            }
+
+            @Override
+            public void onProviderDisabled(String provider) {
+            }
+
+            @Override
+            public void onStatusChanged(String provider, int status, Bundle extras) {
+            }
+        };
     }
 
     private boolean requestInitialPermissions() {
@@ -165,6 +201,57 @@ public class MainActivity extends Activity {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    private void startNativeLocationUpdates() {
+        if (locationManager == null || locationListener == null || !hasLocationPermission()) {
+            return;
+        }
+
+        Location lastKnown = null;
+        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    2000L,
+                    3f,
+                    locationListener
+            );
+            lastKnown = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+        }
+
+        if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    2000L,
+                    3f,
+                    locationListener
+            );
+            Location networkLastKnown = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if (lastKnown == null || (networkLastKnown != null
+                    && networkLastKnown.getTime() > lastKnown.getTime())) {
+                lastKnown = networkLastKnown;
+            }
+        }
+
+        if (lastKnown != null) {
+            sendLocationToWebView(lastKnown);
+        }
+    }
+
+    private void sendLocationToWebView(Location location) {
+        if (location == null || webView == null) {
+            return;
+        }
+
+        lastNativeLocation = location;
+        final double lat = location.getLatitude();
+        final double lng = location.getLongitude();
+        runOnUiThread(() -> {
+            String script = "if (window.updateNativeLocation) { window.updateNativeLocation("
+                    + lat + "," + lng + "); }";
+            webView.evaluateJavascript(script, null);
+        });
+    }
+
     private boolean hasLocationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return true;
@@ -186,6 +273,9 @@ public class MainActivity extends Activity {
 
         if (requestCode == REQUEST_APP_PERMISSIONS) {
             loadTripMate();
+            startNativeLocationUpdates();
+        } else if (requestCode == REQUEST_GEOLOCATION_PERMISSION) {
+            startNativeLocationUpdates();
         }
     }
 
@@ -217,6 +307,20 @@ public class MainActivity extends Activity {
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         webView.saveState(outState);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        startNativeLocationUpdates();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (locationManager != null && locationListener != null) {
+            locationManager.removeUpdates(locationListener);
+        }
     }
 
     @Override

@@ -240,6 +240,10 @@ function onDestChange() {
     destTimeout = setTimeout(async () => {
         const dest = document.getElementById('destination-input').value.trim();
         const routeStart = getRouteStartLatLng();
+        if (dest.length > 2 && !routeStart) {
+            showToast('Waiting for live GPS location...');
+            return;
+        }
         if (dest.length > 2 && routeStart) {
             try {
                 const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(dest)}`);
@@ -391,7 +395,7 @@ function initMap() {
 
 function getRouteStartLatLng() {
     if (gpsLocationReady && currentLat !== null && currentLng !== null) return [currentLat, currentLng];
-    return userCurrentLatLng;
+    return null;
 }
 
 function updateCurrentLocationMarker(latLng, shouldCenter = true) {
@@ -420,6 +424,34 @@ async function updateDetectedLocationInput(latLng) {
     if (detectWrap) detectWrap.innerHTML = '<i data-lucide="crosshair" style="width:18px;height:18px"></i>';
     lucide.createIcons();
 }
+
+function applyLiveLocation(lat, lng, shouldCenter = true) {
+    const nextLat = Number(lat);
+    const nextLng = Number(lng);
+    const latLng = getValidLatLng({ lat: nextLat, lng: nextLng });
+    if (!latLng) return;
+
+    currentLat = latLng[0];
+    currentLng = latLng[1];
+    gpsLocationReady = true;
+    userCurrentLatLng = latLng;
+
+    updateCurrentLocationMarker(latLng, shouldCenter);
+    updateDetectedLocationInput(latLng);
+
+    if (pathData.length === 0 || calcPathDistance([pathData[pathData.length - 1], latLng]) > 0.003) {
+        pathData.push(latLng);
+        if (mapPolyline) mapPolyline.setLatLngs(pathData);
+    }
+
+    if (activeDestinationName) {
+        drawRouteToDestination(activeDestinationName);
+    }
+}
+
+window.updateNativeLocation = function(lat, lng) {
+    applyLiveLocation(lat, lng, true);
+};
 
 function handleGpsFailure() {
     if (!gpsAlertShown) {
@@ -454,19 +486,8 @@ function startLiveLocationWatch(destinationName = activeDestinationName) {
 
     watchId = navigator.geolocation.watchPosition(
         pos => {
-            currentLat = pos.coords.latitude;
-            currentLng = pos.coords.longitude;
-            const latLng = [currentLat, currentLng];
-            gpsLocationReady = true;
-            userCurrentLatLng = latLng;
-
-            updateCurrentLocationMarker(latLng, true);
-            updateDetectedLocationInput(latLng);
-
-            pathData.push(latLng);
-            if (mapPolyline) mapPolyline.setLatLngs(pathData);
-            if (activeDestinationName) drawRouteToDestination(activeDestinationName);
-            if (tripPurpose === 'Tour') fetchLiveSuggestions(currentLat, currentLng);
+            applyLiveLocation(pos.coords.latitude, pos.coords.longitude, true);
+            if (tripPurpose === 'Tour') fetchLiveSuggestions(pos.coords.latitude, pos.coords.longitude);
         },
         err => {
             console.warn('GPS error:', err);
@@ -550,7 +571,11 @@ function drawRoutePolyline(routeLatLngs, destinationLatLng) {
 
 async function drawRouteToDestination(destinationName) {
     const routeStart = getRouteStartLatLng();
-    if (!map || !routeStart || !destinationName) return;
+    if (!map || !destinationName) return;
+    if (!routeStart) {
+        showToast('Waiting for live GPS location...');
+        return;
+    }
 
     try {
         const destinationLatLng = await geocodeDestination(destinationName);
