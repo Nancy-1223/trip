@@ -246,12 +246,11 @@ function onDestChange() {
         }
         if (dest.length > 2 && routeStart) {
             try {
-                const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(dest)}`);
-                const geoData = await geoRes.json();
-                
-                if (geoData && geoData.length > 0) {
-                    const destLat = parseFloat(geoData[0].lat);
-                    const destLon = parseFloat(geoData[0].lon);
+                const destinationLatLng = await geocodeDestination(dest);
+
+                if (destinationLatLng) {
+                    const destLat = destinationLatLng[0];
+                    const destLon = destinationLatLng[1];
                     
                     const route = await fetchRouteGeometry(routeStart, [destLat, destLon]);
                     let distKM = route ? Math.round(route.distance / 100) / 10 : 0;
@@ -269,9 +268,12 @@ function onDestChange() {
                         recalcCost();
                         showToast(`Calculated distance: ${distKM} km`);
                     }
+                } else {
+                    showToast(`Could not find destination: ${dest}`);
                 }
             } catch (err) {
                 console.error("Error calculating distance:", err);
+                showToast('Could not calculate route for this destination.');
             }
         }
     }, 1200);
@@ -512,13 +514,65 @@ function clearRoutePolyline() {
 async function geocodeDestination(destination) {
     if (!destination) return null;
 
-    const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destination)}&limit=1`);
-    if (!geoRes.ok) throw new Error('Destination geocoding failed');
+    const rawDestination = destination.trim();
+    const lowerDestination = rawDestination.toLowerCase();
+    const searchAttempts = [rawDestination];
 
-    const geoData = await geoRes.json();
-    if (!geoData || !geoData.length) return null;
+    if (lowerDestination === 'ooty') {
+        searchAttempts.push('Ooty Tamil Nadu India');
+    }
+    if (!lowerDestination.includes('india')) {
+        searchAttempts.push(`${rawDestination} India`);
+    }
+    if (!lowerDestination.includes('tamil nadu') && lowerDestination.includes('ooty')) {
+        searchAttempts.push(`${rawDestination} Tamil Nadu India`);
+    }
 
-    return [parseFloat(geoData[0].lat), parseFloat(geoData[0].lon)];
+    const uniqueAttempts = [...new Set(searchAttempts.map(q => q.trim()).filter(Boolean))];
+
+    for (const query of uniqueAttempts) {
+        for (const scopedToIndia of [true, false]) {
+            const params = new URLSearchParams({
+                format: 'json',
+                q: query,
+                limit: '3',
+                addressdetails: '1'
+            });
+            if (scopedToIndia) params.set('countrycodes', 'in');
+
+            const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+            console.log('[TripMate] Geocoding destination:', query, scopedToIndia ? '(India scoped)' : '(global)', url);
+
+            const geoRes = await fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en'
+                }
+            });
+            console.log('[TripMate] Nominatim status:', geoRes.status, geoRes.statusText);
+
+            if (!geoRes.ok) {
+                console.warn('[TripMate] Nominatim request failed:', query, geoRes.status);
+                continue;
+            }
+
+            const geoData = await geoRes.json();
+            if (!Array.isArray(geoData) || !geoData.length) {
+                console.warn('[TripMate] No geocode result for:', query, scopedToIndia ? '(India scoped)' : '(global)');
+                continue;
+            }
+
+            const best = geoData.find(item => getValidLatLng({ lat: item.lat, lng: item.lon })) || geoData[0];
+            const latLng = getValidLatLng({ lat: best.lat, lng: best.lon });
+            if (latLng) {
+                console.log('[TripMate] Destination coordinates:', latLng[0], latLng[1], best.display_name || query);
+                return latLng;
+            }
+        }
+    }
+
+    console.error('[TripMate] Geocoding failed for destination:', rawDestination, uniqueAttempts);
+    return null;
 }
 
 async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
@@ -527,10 +581,15 @@ async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
     if (!source || !destination) return null;
 
     const url = `https://router.project-osrm.org/route/v1/driving/${source[1]},${source[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
+    console.log('[TripMate] Current GPS:', currentLat, currentLng);
+    console.log('[TripMate] Destination for OSRM:', destination[0], destination[1]);
+    console.log('[TripMate] OSRM route URL:', url);
     const routeRes = await fetch(url);
+    console.log('[TripMate] OSRM response status:', routeRes.status, routeRes.statusText);
     if (!routeRes.ok) throw new Error('Route request failed');
 
     const routeData = await routeRes.json();
+    console.log('[TripMate] OSRM response:', routeData);
     const route = routeData?.routes?.[0];
     const coords = route?.geometry?.coordinates;
     if (!Array.isArray(coords) || coords.length < 2) return null;
@@ -581,7 +640,7 @@ async function drawRouteToDestination(destinationName) {
         const destinationLatLng = await geocodeDestination(destinationName);
         if (!destinationLatLng) {
             clearRoutePolyline();
-            showToast('Destination location not found.');
+            showToast(`Destination location not found: ${destinationName}`);
             return;
         }
 
