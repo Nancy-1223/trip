@@ -14,8 +14,8 @@
     --red: #ef4444;
     --modal-bg: rgba(234,237,243,0.96);
     --glass: rgba(255,255,255,0.72);
-    --font-display: 'Syne', sans-serif;
-    --font-body: 'DM Sans', sans-serif;
+    --font-display: Arial, Inter, Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-body: Arial, Inter, Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --radius: 20px;
     --radius-sm: 12px;
 }
@@ -184,21 +184,6 @@ body.dark .action-tile.pink { color: #f9a8d4; }
 .purpose-chip { padding: 14px 8px; border-radius: var(--radius-sm); text-align: center; cursor: pointer; font-size: 0.75rem; font-weight: 800; font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.5px; background: var(--bg); color: var(--sub); box-shadow: 3px 3px 8px var(--shadow-dark), -3px -3px 8px var(--shadow-light); transition: all 0.25s; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .purpose-chip svg { width: 20px; height: 20px; }
 .purpose-chip.active { background: var(--blue); color: white; box-shadow: 0 8px 20px rgba(59,130,246,0.35); }
-
-/* Cost Calculator */
-.cost-calculator { background: var(--bg); border-radius: var(--radius); padding: 18px; margin-top: 18px; box-shadow: inset 3px 3px 8px var(--shadow-dark), inset -3px -3px 8px var(--shadow-light); }
-.cost-calc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-family: var(--font-display); font-weight: 800; font-size: 1rem; color: var(--text); }
-.cost-calc-header svg { width: 20px; height: 20px; color: var(--green); }
-.calc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-.calc-field label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--sub); display: block; margin-bottom: 5px; }
-.calc-field input, .calc-field select { width: 100%; padding: 10px 12px; background: var(--card); border: none; border-radius: var(--radius-sm); color: var(--text); font-size: 0.9rem; box-shadow: 3px 3px 6px var(--shadow-dark), -3px -3px 6px var(--shadow-light); outline: none; }
-.cost-breakdown { border-top: 1px solid rgba(128,128,128,0.15); padding-top: 12px; }
-.cost-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 0.85rem; color: var(--sub); border-bottom: 1px dashed rgba(128,128,128,0.1); }
-.cost-val { font-weight: 700; color: var(--text); }
-.cost-total-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0 4px; font-weight: 800; font-size: 0.95rem; }
-.cost-total { font-family: var(--font-display); font-size: 1.6rem; font-weight: 900; color: var(--green); }
-.cost-per-person { text-align: right; font-size: 0.75rem; color: var(--sub); }
-.cost-per-person span { color: var(--blue); font-weight: 700; }
 
 /* Suggestions */
 .suggestion-card { background: rgba(59,130,246,0.08); border-radius: var(--radius-sm); padding: 14px; margin-top: 14px; }

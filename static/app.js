@@ -17,6 +17,9 @@ let plannerLastDestinationLatLng = null;
 let plannerLastRouteGeometry = null;
 let allTrips = [];
 let selectedImageData = null;
+let isAuthenticated = false;
+let mapUserHasInteracted = false;
+let lastAutoFitRouteKey = null;
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
@@ -24,13 +27,18 @@ async function checkAuth() {
         const res = await fetch('/api/auth/me');
         const data = await res.json();
         if (data.logged_in) {
+            isAuthenticated = true;
             document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
             showView('dashboard-view');
             loadTrips();
         } else {
+            isAuthenticated = false;
             showView('login-view');
         }
-    } catch { showView('login-view'); }
+    } catch {
+        isAuthenticated = false;
+        showView('login-view');
+    }
 }
 
 function switchAuthTab(tab) {
@@ -44,16 +52,17 @@ async function doLogin() {
     const password = document.getElementById('login-password').value;
     const errEl = document.getElementById('login-error');
     errEl.classList.add('hidden');
-    if (!username || !password) { errEl.textContent = 'Please fill in all fields.'; errEl.classList.remove('hidden'); return; }
+    if (!username || !password) { errEl.textContent = 'Email and password are required'; errEl.classList.remove('hidden'); return; }
     try {
         const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password }) });
         const data = await res.json();
-        if (data.success) {
+        if (res.ok && data.success) {
+            isAuthenticated = true;
             document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
             showView('dashboard-view');
             loadTrips();
         } else {
-            errEl.textContent = data.error || 'Login failed.';
+            errEl.textContent = data.error || 'Invalid email or password';
             errEl.classList.remove('hidden');
         }
     } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
@@ -70,6 +79,7 @@ async function doRegister() {
         const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password, display_name: display_name || username }) });
         const data = await res.json();
         if (data.success) {
+            isAuthenticated = true;
             document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
             showView('dashboard-view');
             loadTrips();
@@ -82,11 +92,15 @@ async function doRegister() {
 
 async function doLogout() {
     await fetch('/api/auth/logout', { method: 'POST' });
+    isAuthenticated = false;
     showView('login-view');
 }
 
 // ─── View Navigation ──────────────────────────────────────────────────────────
 function showView(viewId) {
+    if (viewId !== 'login-view' && !isAuthenticated) {
+        viewId = 'login-view';
+    }
     document.querySelectorAll('.view').forEach(v => {
         v.classList.remove('active-view');
         v.classList.add('hidden');
@@ -231,7 +245,6 @@ function selectPurpose(el) {
     document.querySelectorAll('.purpose-chip').forEach(c => c.classList.remove('active'));
     el.classList.add('active');
     tripPurpose = el.dataset.purpose;
-    recalcCost();
     updateSetupSuggestions();
 }
 
@@ -270,8 +283,6 @@ function onDestChange() {
                     }
                     
                     if (distKM > 0) {
-                        document.getElementById('calc-distance').value = distKM;
-                        recalcCost();
                         showToast(`Calculated distance: ${distKM} km`);
                     }
                 } else {
@@ -283,8 +294,6 @@ function onDestChange() {
             }
         }
     }, 1200);
-    
-    recalcCost();
 }
 
 async function updateSetupSuggestions() {
@@ -317,54 +326,19 @@ async function updateSetupSuggestions() {
     }
 }
 
-// ─── Cost Calculator ──────────────────────────────────────────────────────────
-async function recalcCost() {
-    // Auto-fill GPS-tracked distance if available and field is empty
-    const distField = document.getElementById('calc-distance');
-    if ((!distField.value || distField.value === '0') && pathData.length > 1) {
-        const gpsDist = calcPathDistance(pathData);
-        if (gpsDist > 0) distField.value = gpsDist;
-    }
-    const distance = parseFloat(distField.value) || 0;
-    const days = parseInt(document.getElementById('calc-days').value) || 1;
-    const people = parseInt(document.getElementById('calc-people').value) || 1;
-    const vehicle = document.getElementById('calc-vehicle').value;
-    const breakdown = document.getElementById('cost-breakdown');
-
-    if (distance <= 0) { breakdown.classList.add('hidden'); return; }
-
-    try {
-        const res = await fetch('/api/calculate-cost', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ distance, days, people, vehicle, purpose: tripPurpose })
-        });
-        const data = await res.json();
-        const fmt = n => '₹' + Number(n).toLocaleString('en-IN');
-        document.getElementById('c-fuel').textContent = fmt(data.fuel);
-        document.getElementById('c-food').textContent = fmt(data.food);
-        document.getElementById('c-acc').textContent  = fmt(data.accommodation);
-        document.getElementById('c-misc').textContent = fmt(data.misc);
-        document.getElementById('c-total').textContent = fmt(data.total);
-        document.getElementById('c-pp').textContent = fmt(data.per_person);
-        breakdown.classList.remove('hidden');
-    } catch {}
-}
-
 // ─── Start Trip ───────────────────────────────────────────────────────────────
 async function startTrip() {
     const dest = document.getElementById('destination-input').value.trim();
     const start = document.getElementById('start-point-input').value.trim();
     if (!dest) { showToast('Enter a destination'); return; }
 
-    const totalText = document.getElementById('c-total')?.textContent || '0';
-    const totalNum = parseFloat(totalText.replace(/[^0-9.]/g, '')) || 0;
-
     hideSetupModal();
     showView('map-view');
     document.getElementById('trip-status-badge').textContent = `${tripPurpose.toUpperCase()} ACTIVE`;
     document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
     activeDestinationName = dest;
+    lastAutoFitRouteKey = null;
+    mapUserHasInteracted = false;
     initMap();
     startLiveLocationWatch(dest);
     await drawRouteToDestination(dest);
@@ -378,12 +352,7 @@ async function startTrip() {
                 destination: dest, 
                 start_loc: start,
                 purpose: tripPurpose,
-                cost: totalNum,
-                fuel_cost: parseFloat(document.getElementById('c-fuel')?.textContent?.replace(/[^0-9.]/g, '') || 0),
-                food_cost: parseFloat(document.getElementById('c-food')?.textContent?.replace(/[^0-9.]/g, '') || 0),
-                accommodation_cost: parseFloat(document.getElementById('c-acc')?.textContent?.replace(/[^0-9.]/g, '') || 0),
-                other_cost: parseFloat(document.getElementById('c-misc')?.textContent?.replace(/[^0-9.]/g, '') || 0),
-                vehicle_type: document.getElementById('calc-vehicle')?.value || 'car'
+                cost: 0
             })
         });
         const data = await res.json();
@@ -399,6 +368,12 @@ function initMap() {
     mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
     routePolyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(map);
     mapMarker = L.marker(FALLBACK_LATLNG);
+    const markManualMapInteraction = () => { mapUserHasInteracted = true; };
+    map.on('dragstart', markManualMapInteraction);
+    const container = map.getContainer();
+    ['wheel', 'mousedown', 'touchstart', 'dblclick', 'keydown'].forEach(eventName => {
+        container.addEventListener(eventName, markManualMapInteraction, { passive: true });
+    });
     setTimeout(() => map.invalidateSize(), 150);
 }
 
@@ -412,7 +387,7 @@ function updateCurrentLocationMarker(latLng, shouldCenter = true) {
     if (!mapMarker) mapMarker = L.marker(latLng);
     mapMarker.setLatLng(latLng);
     if (!map.hasLayer(mapMarker)) mapMarker.addTo(map);
-    if (shouldCenter) map.setView(latLng, 16);
+    if (shouldCenter && !mapUserHasInteracted) map.setView(latLng, 16);
 }
 
 async function updateDetectedLocationInput(latLng) {
@@ -453,13 +428,11 @@ function applyLiveLocation(lat, lng, shouldCenter = true) {
         if (mapPolyline) mapPolyline.setLatLngs(pathData);
     }
 
-    if (activeDestinationName) {
-        drawRouteToDestination(activeDestinationName);
-    }
+    if (activeDestinationName) drawRouteToDestination(activeDestinationName);
 }
 
 window.updateNativeLocation = function(lat, lng) {
-    applyLiveLocation(lat, lng, true);
+    applyLiveLocation(lat, lng, false);
 };
 
 function handleGpsFailure() {
@@ -495,7 +468,7 @@ function startLiveLocationWatch(destinationName = activeDestinationName) {
 
     watchId = navigator.geolocation.watchPosition(
         pos => {
-            applyLiveLocation(pos.coords.latitude, pos.coords.longitude, true);
+            applyLiveLocation(pos.coords.latitude, pos.coords.longitude, false);
             if (tripPurpose === 'Tour') fetchLiveSuggestions(pos.coords.latitude, pos.coords.longitude);
         },
         err => {
@@ -722,7 +695,13 @@ function drawRoutePolyline(routeLatLngs, destinationLatLng) {
     const routeStart = getRouteStartLatLng();
     if (routeStart) boundsPoints.push(routeStart);
     if (validDestination) boundsPoints.push(validDestination);
-    map.fitBounds(L.latLngBounds(boundsPoints), { padding: [46, 46], maxZoom: 15 });
+
+    const destinationKey = validDestination ? validDestination.map(n => Number(n).toFixed(5)).join(',') : 'no-dest';
+    const routeKey = destinationKey;
+    if (!mapUserHasInteracted && lastAutoFitRouteKey !== routeKey) {
+        map.fitBounds(L.latLngBounds(boundsPoints), { padding: [46, 46], maxZoom: 15 });
+        lastAutoFitRouteKey = routeKey;
+    }
     setTimeout(() => map.invalidateSize(), 150);
     return true;
 }
@@ -781,7 +760,7 @@ function getValidLatLng(place) {
     return [lat, lng];
 }
 
-function addTouristSpotMarkers(spots, destination = '') {
+function addTouristSpotMarkers(spots, destination = '', autoFit = true) {
     if (!map) initMap();
     clearTouristSpotMarkers();
 
@@ -797,8 +776,10 @@ function addTouristSpotMarkers(spots, destination = '') {
         boundsPoints.push(latLng);
     });
 
-    if (boundsPoints.length) {
-        map.fitBounds(L.latLngBounds(boundsPoints), { padding: [42, 42], maxZoom: 15 });
+    if (boundsPoints.length && autoFit) {
+        if (!mapUserHasInteracted) {
+            map.fitBounds(L.latLngBounds(boundsPoints), { padding: [42, 42], maxZoom: 15 });
+        }
     } else if (destination) {
         showToast(`No mappable tourist spots found for ${destination}.`);
     }
@@ -817,7 +798,7 @@ async function addTouristSpotMarkersForDestination(destination) {
             showToast(`No tourist spots found for ${destination}.`);
             return 0;
         }
-        return addTouristSpotMarkers(spots, destination);
+        return addTouristSpotMarkers(spots, destination, false);
     } catch {
         showToast('Could not load tourist spots for this destination.');
         return 0;

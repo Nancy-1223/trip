@@ -107,12 +107,17 @@ def index():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    data = request.json
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or data.get('email') or '').strip()
+    password = data.get('password') or ''
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Email and password are required'}), 400
+
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE username=? AND password=?',
-              (data.get('username'), data.get('password')))
+              (username, password))
     user = c.fetchone()
     conn.close()
     if user:
@@ -120,7 +125,7 @@ def login():
         session['username'] = user['username']
         session['display_name'] = user['display_name']
         return jsonify({'success': True, 'display_name': user['display_name'], 'username': user['username']})
-    return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+    return jsonify({'success': False, 'error': 'Invalid email or password'}), 401
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
@@ -151,45 +156,6 @@ def me():
     if 'user_id' in session:
         return jsonify({'logged_in': True, 'display_name': session.get('display_name'), 'username': session.get('username')})
     return jsonify({'logged_in': False})
-
-# ── Trip Cost Calculator ──────────────────────────────────────────────────────
-
-@app.route('/api/calculate-cost', methods=['POST'])
-def calculate_cost():
-    data = request.json
-    distance = float(data.get('distance', 0))        # km
-    vehicle  = data.get('vehicle', 'car')
-    days     = int(data.get('days', 1))
-    people   = int(data.get('people', 1))
-
-    # Realistic Indian fuel/transport rates (₹/km, one-way)
-    fuel_rates = {'car': 6, 'bike': 2, 'bus': 0.5, 'auto': 12, 'train': 0.5, 'flight': 4}
-    fuel_per_km = fuel_rates.get(vehicle, 6)
-    if vehicle == 'flight':
-        fuel_cost = round(max(2500, distance * fuel_per_km) * people, 2)
-    elif vehicle == 'auto':
-        fuel_cost = round(min(distance, 30) * fuel_per_km * people, 2)
-    else:
-        fuel_cost = round(distance * fuel_per_km * people, 2)
-
-    food_per_day = {'Tour': 300, 'Business': 500, 'Personal': 200}
-    food_cost = round(food_per_day.get(data.get('purpose', 'Personal'), 250) * people * days, 2)
-
-    acc_per_night = {'Tour': 800, 'Business': 1500, 'Personal': 500}
-    acc_nights = max(0, days - 1)
-    acc_cost = round(acc_per_night.get(data.get('purpose', 'Personal'), 700) * acc_nights, 2)
-
-    misc = round(150 * people * days if data.get('purpose') == 'Tour' else 50 * people, 2)
-    total = fuel_cost + food_cost + acc_cost + misc
-
-    return jsonify({
-        'fuel': fuel_cost,
-        'food': food_cost,
-        'accommodation': acc_cost,
-        'misc': misc,
-        'total': round(total, 2),
-        'per_person': round(total / people, 2)
-    })
 
 # ── Trips ─────────────────────────────────────────────────────────────────────
 

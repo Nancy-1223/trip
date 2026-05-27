@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -173,50 +172,6 @@
                 <div class="purpose-chip active" data-purpose="Tour" onclick="selectPurpose(this)"><i data-lucide="plane"></i> Tour</div>
                 <div class="purpose-chip" data-purpose="Business" onclick="selectPurpose(this)"><i data-lucide="briefcase"></i> Work</div>
                 <div class="purpose-chip" data-purpose="Personal" onclick="selectPurpose(this)"><i data-lucide="user"></i> Self</div>
-            </div>
-        </div>
-
-        <!-- Cost Calculator -->
-        <div class="cost-calculator">
-            <div class="cost-calc-header">
-                <i data-lucide="indian-rupee"></i>
-                <h3>Trip Cost Estimator</h3>
-            </div>
-            <div class="calc-grid">
-                <div class="calc-field">
-                    <label>Distance (km)</label>
-                    <input type="number" id="calc-distance" placeholder="0" oninput="recalcCost()" min="0">
-                </div>
-                <div class="calc-field">
-                    <label>Days</label>
-                    <input type="number" id="calc-days" placeholder="1" oninput="recalcCost()" min="1" value="1">
-                </div>
-                <div class="calc-field">
-                    <label>People</label>
-                    <input type="number" id="calc-people" placeholder="1" oninput="recalcCost()" min="1" value="1">
-                </div>
-                <div class="calc-field">
-                    <label>Vehicle</label>
-                    <select id="calc-vehicle" onchange="recalcCost()">
-                        <option value="car">🚗 Car</option>
-                        <option value="bike">🏍 Bike</option>
-                        <option value="bus">🚌 Bus</option>
-                        <option value="auto">🛺 Auto</option>
-                        <option value="train">🚆 Train</option>
-                        <option value="flight">✈️ Flight</option>
-                    </select>
-                </div>
-            </div>
-            <div id="cost-breakdown" class="cost-breakdown hidden">
-                <div class="cost-row"><span>⛽ Fuel / Transport</span><span id="c-fuel" class="cost-val">₹0</span></div>
-                <div class="cost-row"><span>🍽 Food & Dining</span><span id="c-food" class="cost-val">₹0</span></div>
-                <div class="cost-row"><span>🏨 Accommodation</span><span id="c-acc" class="cost-val">₹0</span></div>
-                <div class="cost-row"><span>🎭 Misc / Sightseeing</span><span id="c-misc" class="cost-val">₹0</span></div>
-                <div class="cost-total-row">
-                    <span>Total Estimate</span>
-                    <span id="c-total" class="cost-total">₹0</span>
-                </div>
-                <div class="cost-per-person">Per person: <span id="c-pp">₹0</span></div>
             </div>
         </div>
 
