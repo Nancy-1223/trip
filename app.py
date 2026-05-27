@@ -4,10 +4,9 @@ import os
 import json
 import base64
 import random
-import smtplib
 from datetime import datetime, timedelta
-from email.message import EmailMessage
 from functools import wraps
+import urllib.error
 import urllib.request
 import urllib.parse
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -18,8 +17,8 @@ app = Flask(__name__, static_folder=static_dir, template_folder=template_dir)
 app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
 
-# SMTP configuration is read from environment variables:
-# SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_USE_TLS
+# Resend email API configuration is read from environment variables:
+# RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_TIMEOUT
 OTP_EXPIRY_MINUTES = 5
 
 def init_db():
@@ -147,45 +146,57 @@ def index():
     return render_template('index.html')
 
 def send_otp_email(email, otp):
-    host = os.environ.get('SMTP_HOST') or 'smtp.gmail.com'
+    api_key = os.environ.get('RESEND_API_KEY')
+    from_email = os.environ.get('RESEND_FROM_EMAIL') or os.environ.get('RESEND_FROM') or 'TripMate <onboarding@resend.dev>'
     try:
-        port = int(os.environ.get('SMTP_PORT', '587'))
+        timeout = int(os.environ.get('RESEND_TIMEOUT', '20'))
     except ValueError:
-        port = 587
-    username = os.environ.get('SMTP_USER') or os.environ.get('SMTP_USERNAME')
-    password = os.environ.get('SMTP_PASS') or os.environ.get('SMTP_PASSWORD')
-    from_email = os.environ.get('SMTP_FROM') or os.environ.get('SMTP_FROM_EMAIL') or username
-    timeout = int(os.environ.get('SMTP_TIMEOUT', '20'))
+        timeout = 20
 
-    print(f'[TripMate] SMTP host loaded: {host}:{port}')
-    print(f'[TripMate] SMTP user loaded: {"yes" if username else "no"}')
+    print(f'[TripMate] Resend API key loaded: {"yes" if api_key else "no"}')
     print(f'[TripMate] OTP generated for {email}: {otp}')
 
-    if not username or not password or not from_email:
-        print('[TripMate] SMTP credentials missing. Set SMTP_USER, SMTP_PASS, and SMTP_FROM to send OTP email.')
+    if not api_key:
+        print('[TripMate] RESEND_API_KEY missing. Set RESEND_API_KEY to send OTP email.')
         print(f'[TripMate] Development OTP for {email}: {otp}')
         return False
 
-    message = EmailMessage()
-    message['Subject'] = 'TripMate Email Verification OTP'
-    message['From'] = from_email
-    message['To'] = email
-    message.set_content(
-        f'Your TripMate verification OTP is: {otp}\n\n'
-        'This OTP is valid for 5 minutes.'
+    payload = json.dumps({
+        'from': from_email,
+        'to': [email],
+        'subject': 'TripMate Email Verification OTP',
+        'text': (
+            f'Your TripMate verification OTP is: {otp}\n\n'
+            f'This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.'
+        ),
+    }).encode('utf-8')
+    request_obj = urllib.request.Request(
+        'https://api.resend.com/emails',
+        data=payload,
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'TripMate/1.0',
+        },
+        method='POST',
     )
 
     try:
-        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(username, password)
-            smtp.send_message(message)
+        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+            if response.status < 200 or response.status >= 300:
+                response_body = response.read().decode('utf-8', errors='replace')
+                print(f'[TripMate] Resend email failed for {email}: HTTP {response.status} {response_body}')
+                print(f'[TripMate] Development OTP for {email}: {otp}')
+                return False
         print(f'[TripMate] OTP email sent to {email}')
         return True
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode('utf-8', errors='replace')
+        print(f'[TripMate] Resend email failed for {email}: HTTP {exc.code} {response_body}')
+        print(f'[TripMate] Development OTP for {email}: {otp}')
+        return False
     except Exception as exc:
-        print(f'[TripMate] SMTP email failed for {email}: {type(exc).__name__}: {exc}')
+        print(f'[TripMate] Resend email failed for {email}: {type(exc).__name__}: {exc}')
         print(f'[TripMate] Development OTP for {email}: {otp}')
         return False
 
@@ -249,7 +260,7 @@ def signup():
         return response, status
 
     email_sent = send_otp_email(email, otp)
-    message = 'OTP sent to email' if email_sent else 'SMTP unavailable. OTP printed in backend logs.'
+    message = 'OTP sent to email' if email_sent else 'Email service unavailable. OTP printed in backend logs.'
     return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
 
 @app.route('/verify-otp', methods=['POST'])
@@ -292,7 +303,7 @@ def resend_otp():
         return response, status
 
     email_sent = send_otp_email(email, otp)
-    message = 'OTP sent to email' if email_sent else 'SMTP unavailable. OTP printed in backend logs.'
+    message = 'OTP sent to email' if email_sent else 'Email service unavailable. OTP printed in backend logs.'
     return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
 
 @app.route('/login', methods=['POST'])

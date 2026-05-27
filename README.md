@@ -1,15 +1,12 @@
 TripMate
 ========
 
-Email OTP signup uses SMTP settings from environment variables:
+Email OTP signup uses the Resend HTTP API.
 
-- `SMTP_HOST` (defaults to `smtp.gmail.com`)
-- `SMTP_PORT` (defaults to `587`)
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM`
-- `SMTP_TIMEOUT` (defaults to `20` seconds)
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL` (optional, defaults to `TripMate <onboarding@resend.dev>`)
+- `RESEND_TIMEOUT` (optional, defaults to `20` seconds)
 
-If SMTP settings are missing or sending fails during development, signup still continues and the OTP is printed in the backend logs.
+If the Resend API key is missing or sending fails during development, signup still continues and the OTP is printed in the backend logs.
 
 Passwords are stored as hashes. Signup OTPs expire after 5 minutes.
