@@ -147,15 +147,22 @@ def index():
     return render_template('index.html')
 
 def send_otp_email(email, otp):
-    host = os.environ.get('SMTP_HOST')
-    port = int(os.environ.get('SMTP_PORT', '587'))
+    host = os.environ.get('SMTP_HOST') or 'smtp.gmail.com'
+    try:
+        port = int(os.environ.get('SMTP_PORT', '587'))
+    except ValueError:
+        port = 587
     username = os.environ.get('SMTP_USER') or os.environ.get('SMTP_USERNAME')
     password = os.environ.get('SMTP_PASS') or os.environ.get('SMTP_PASSWORD')
     from_email = os.environ.get('SMTP_FROM') or os.environ.get('SMTP_FROM_EMAIL') or username
-    use_tls = os.environ.get('SMTP_USE_TLS', 'true').lower() != 'false'
+    timeout = int(os.environ.get('SMTP_TIMEOUT', '20'))
 
-    if not host or not username or not password or not from_email:
-        print('[TripMate] SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM to send OTP email.')
+    print(f'[TripMate] SMTP host loaded: {host}:{port}')
+    print(f'[TripMate] SMTP user loaded: {"yes" if username else "no"}')
+    print(f'[TripMate] OTP generated for {email}: {otp}')
+
+    if not username or not password or not from_email:
+        print('[TripMate] SMTP credentials missing. Set SMTP_USER, SMTP_PASS, and SMTP_FROM to send OTP email.')
         print(f'[TripMate] Development OTP for {email}: {otp}')
         return False
 
@@ -169,15 +176,16 @@ def send_otp_email(email, otp):
     )
 
     try:
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
+        with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
             smtp.login(username, password)
             smtp.send_message(message)
         print(f'[TripMate] OTP email sent to {email}')
         return True
     except Exception as exc:
-        print(f'[TripMate] SMTP send failed for {email}: {exc}')
+        print(f'[TripMate] SMTP email failed for {email}: {type(exc).__name__}: {exc}')
         print(f'[TripMate] Development OTP for {email}: {otp}')
         return False
 
