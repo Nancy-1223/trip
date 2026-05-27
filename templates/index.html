@@ -33,10 +33,10 @@
         <!-- Login Form -->
         <div id="login-form">
             <div class="field-group">
-                <label>Username</label>
+                <label>Email</label>
                 <div class="field-wrap">
-                    <i data-lucide="user" class="field-icon"></i>
-                    <input type="text" id="login-username" placeholder="your username" autocomplete="username">
+                    <i data-lucide="mail" class="field-icon"></i>
+                    <input type="email" id="login-username" placeholder="you@example.com" autocomplete="email">
                 </div>
             </div>
             <div class="field-group">
@@ -56,17 +56,10 @@
         <!-- Register Form -->
         <div id="register-form" class="hidden">
             <div class="field-group">
-                <label>Display Name</label>
+                <label>Email</label>
                 <div class="field-wrap">
-                    <i data-lucide="smile" class="field-icon"></i>
-                    <input type="text" id="reg-name" placeholder="Your name">
-                </div>
-            </div>
-            <div class="field-group">
-                <label>Username</label>
-                <div class="field-wrap">
-                    <i data-lucide="at-sign" class="field-icon"></i>
-                    <input type="text" id="reg-username" placeholder="choose a username">
+                    <i data-lucide="mail" class="field-icon"></i>
+                    <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
                 </div>
             </div>
             <div class="field-group">
@@ -79,6 +72,21 @@
             <div id="reg-error" class="auth-error hidden"></div>
             <button class="auth-btn" onclick="doRegister()">
                 <span>Create Account</span> <i data-lucide="arrow-right"></i>
+            </button>
+        </div>
+
+        <div id="otp-form" class="hidden">
+            <div class="field-group">
+                <label>Verification OTP</label>
+                <div class="field-wrap">
+                    <i data-lucide="shield-check" class="field-icon"></i>
+                    <input type="text" id="otp-input" placeholder="6-digit OTP" inputmode="numeric" maxlength="6">
+                </div>
+            </div>
+            <div id="otp-error" class="auth-error hidden"></div>
+            <div id="otp-success" class="auth-success hidden"></div>
+            <button class="auth-btn" onclick="verifyOtp()">
+                <span>Verify Email</span> <i data-lucide="check"></i>
             </button>
         </div>
     </div>
@@ -221,7 +229,6 @@
             <div class="planner-metrics">
                 <div class="metric"><span id="p-dist">0 km</span><label>Distance</label></div>
                 <div class="metric"><span id="p-time">0 min</span><label>Est. Time</label></div>
-                <div class="metric"><span id="p-cost">₹0</span><label>Est. Cost</label></div>
             </div>
             
             <div class="filter-section">

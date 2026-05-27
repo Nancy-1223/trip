@@ -73,6 +73,7 @@ button { font-family: var(--font-display); cursor: pointer; }
 .auth-btn:active { transform: scale(0.97); box-shadow: 0 4px 10px rgba(59,130,246,0.25); }
 .auth-btn svg { width: 18px; height: 18px; }
 .auth-error { background: rgba(239,68,68,0.12); color: var(--red); padding: 10px 14px; border-radius: var(--radius-sm); font-size: 0.85rem; margin-bottom: 12px; font-weight: 600; }
+.auth-success { background: rgba(34,197,94,0.12); color: var(--green); padding: 10px 14px; border-radius: var(--radius-sm); font-size: 0.85rem; margin-bottom: 12px; font-weight: 600; }
 .demo-hint { text-align: center; font-size: 0.78rem; color: var(--sub); margin-top: 12px; }
 .demo-hint strong { color: var(--blue); }
 
@@ -170,7 +171,6 @@ body.dark .action-tile.pink { color: #f9a8d4; }
 .trip-icon svg { width: 20px; height: 20px; }
 .trip-dest { font-weight: 700; font-size: 1rem; }
 .trip-meta { font-size: 0.75rem; color: var(--sub); margin-top: 2px; }
-.trip-cost-badge { font-size: 0.75rem; font-weight: 700; color: var(--green); background: rgba(34,197,94,0.12); padding: 3px 8px; border-radius: 8px; margin-top: 4px; display: inline-block; }
 .empty-placeholder { text-align: center; color: var(--sub); padding: 32px; background: var(--bg); border-radius: var(--radius); box-shadow: inset 3px 3px 8px var(--shadow-dark), inset -3px -3px 8px var(--shadow-light); }
 
 /* ═══════════════════════════════════════════ MODAL */
@@ -290,7 +290,6 @@ body.dark .start-btn { background: var(--blue); }
 .history-meta { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .history-tag { font-size: 0.72rem; font-weight: 700; padding: 4px 10px; border-radius: 20px; }
 .history-tag.purpose { background: rgba(59,130,246,0.12); color: var(--blue); }
-.history-tag.cost { background: rgba(34,197,94,0.12); color: var(--green); }
 .history-tag.date { background: rgba(128,128,128,0.1); color: var(--sub); }
 
 /* ═══════════════════════════════════════════ TOAST */

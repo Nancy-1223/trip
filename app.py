@@ -3,16 +3,24 @@ import sqlite3
 import os
 import json
 import base64
-from datetime import datetime
+import random
+import smtplib
+from datetime import datetime, timedelta
+from email.message import EmailMessage
 from functools import wraps
 import urllib.request
 import urllib.parse
+from werkzeug.security import generate_password_hash, check_password_hash
 
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static'))
 app = Flask(__name__, static_folder=static_dir, template_folder=template_dir)
 app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
+
+# SMTP configuration is read from environment variables:
+# SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_USE_TLS
+OTP_EXPIRY_MINUTES = 5
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -26,6 +34,18 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    existing_cols = {row[1] for row in c.execute('PRAGMA table_info(users)').fetchall()}
+    legacy_users_need_verification_migration = 'is_verified' not in existing_cols
+    migrations = [
+        ('email', 'TEXT'),
+        ('password_hash', 'TEXT'),
+        ('otp_code', 'TEXT'),
+        ('otp_expires_at', 'TEXT'),
+        ('is_verified', 'INTEGER DEFAULT 0'),
+    ]
+    for col, definition in migrations:
+        if col not in existing_cols:
+            c.execute(f'ALTER TABLE users ADD COLUMN {col} {definition}')
     c.execute('''
         CREATE TABLE IF NOT EXISTS trips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,10 +102,31 @@ def init_db():
     ''')
     # Insert demo user
     try:
-        c.execute("INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)",
-                  ('traveler', 'demo123', 'Demo Traveler'))
+        c.execute("""INSERT INTO users (username, password, email, password_hash, display_name, is_verified)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  ('traveler', '', 'traveler', generate_password_hash('demo123'), 'Demo Traveler', 1))
     except:
         pass
+
+    c.execute('SELECT id, username, password, email, password_hash, is_verified FROM users')
+    for user_id, username, password, email, password_hash, is_verified in c.fetchall():
+        updates = []
+        values = []
+        if not email:
+            updates.append('email=?')
+            values.append(username)
+        if not password_hash and password:
+            updates.append('password_hash=?')
+            values.append(generate_password_hash(password))
+        if password:
+            updates.append('password=?')
+            values.append('')
+        if legacy_users_need_verification_migration or is_verified is None:
+            updates.append('is_verified=?')
+            values.append(1)
+        if updates:
+            values.append(user_id)
+            c.execute(f'UPDATE users SET {", ".join(updates)} WHERE id=?', values)
     conn.commit()
     conn.close()
 
@@ -105,46 +146,126 @@ def login_required(f):
 def index():
     return render_template('index.html')
 
+def send_otp_email(email, otp):
+    host = os.environ.get('SMTP_HOST')
+    port = int(os.environ.get('SMTP_PORT', '587'))
+    username = os.environ.get('SMTP_USERNAME')
+    password = os.environ.get('SMTP_PASSWORD')
+    from_email = os.environ.get('SMTP_FROM_EMAIL') or username
+    use_tls = os.environ.get('SMTP_USE_TLS', 'true').lower() != 'false'
+
+    if not host or not username or not password or not from_email:
+        raise RuntimeError('Email service is not configured')
+
+    message = EmailMessage()
+    message['Subject'] = 'TripMate email verification OTP'
+    message['From'] = from_email
+    message['To'] = email
+    message.set_content(f'Your TripMate verification OTP is {otp}. It expires in 5 minutes.')
+
+    with smtplib.SMTP(host, port, timeout=15) as smtp:
+        if use_tls:
+            smtp.starttls()
+        smtp.login(username, password)
+        smtp.send_message(message)
+
+def create_pending_user(email, password):
+    otp = f'{random.randint(0, 999999):06d}'
+    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
+    password_hash = generate_password_hash(password)
+
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    existing = c.execute('SELECT id, is_verified FROM users WHERE email=? OR username=?', (email, email)).fetchone()
+    if existing and existing['is_verified']:
+        conn.close()
+        return None, jsonify({'success': False, 'error': 'Email already registered'}), 409
+    if existing:
+        c.execute('''UPDATE users SET username=?, password=?, email=?, password_hash=?, otp_code=?,
+                     otp_expires_at=?, is_verified=0, display_name=?
+                     WHERE id=?''',
+                  (email, '', email, password_hash, otp, expires_at, email, existing['id']))
+    else:
+        c.execute('''INSERT INTO users (username, password, email, password_hash, display_name,
+                     otp_code, otp_expires_at, is_verified)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 0)''',
+                  (email, '', email, password_hash, email, otp, expires_at))
+    conn.commit()
+    conn.close()
+    return otp, None, None
+
+@app.route('/signup', methods=['POST'])
+@app.route('/api/auth/register', methods=['POST'])
+def signup():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    if not email or not password:
+        return jsonify({'success': False, 'error': 'Email and password are required'}), 400
+
+    otp, response, status = create_pending_user(email, password)
+    if response:
+        return response, status
+
+    try:
+        send_otp_email(email, otp)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': 'Could not send OTP email. Check SMTP configuration.'}), 500
+
+    return jsonify({'success': True, 'message': 'OTP sent to email'})
+
+@app.route('/verify-otp', methods=['POST'])
+def verify_otp():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    otp = (data.get('otp') or '').strip()
+    if not email or not otp:
+        return jsonify({'success': False, 'error': 'Email and OTP are required'}), 400
+
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    user = c.execute('SELECT * FROM users WHERE email=? OR username=?', (email, email)).fetchone()
+    if not user or user['otp_code'] != otp:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Invalid OTP'}), 400
+    try:
+        expires_at = datetime.fromisoformat(user['otp_expires_at']) if user['otp_expires_at'] else datetime.min
+    except ValueError:
+        expires_at = datetime.min
+    if datetime.utcnow() > expires_at:
+        conn.close()
+        return jsonify({'success': False, 'error': 'OTP expired'}), 400
+
+    c.execute('UPDATE users SET is_verified=1, otp_code=NULL, otp_expires_at=NULL WHERE id=?', (user['id'],))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Email verified successfully'})
+
+@app.route('/login', methods=['POST'])
 @app.route('/api/auth/login', methods=['POST'])
 def login():
     data = request.get_json(silent=True) or {}
-    username = (data.get('username') or data.get('email') or '').strip()
+    email = (data.get('email') or data.get('username') or '').strip().lower()
     password = data.get('password') or ''
-    if not username or not password:
+    if not email or not password:
         return jsonify({'success': False, 'error': 'Email and password are required'}), 400
 
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE username=? AND password=?',
-              (username, password))
-    user = c.fetchone()
+    user = c.execute('SELECT * FROM users WHERE email=? OR username=?', (email, email)).fetchone()
     conn.close()
-    if user:
-        session['user_id'] = user['id']
-        session['username'] = user['username']
-        session['display_name'] = user['display_name']
-        return jsonify({'success': True, 'display_name': user['display_name'], 'username': user['username']})
-    return jsonify({'success': False, 'error': 'Invalid email or password'}), 401
+    if not user or not user['password_hash'] or not check_password_hash(user['password_hash'], password):
+        return jsonify({'success': False, 'error': 'Invalid email or password'}), 401
+    if not user['is_verified']:
+        return jsonify({'success': False, 'error': 'Please verify your email before login'}), 403
 
-@app.route('/api/auth/register', methods=['POST'])
-def register():
-    data = request.json
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)",
-                  (data.get('username'), data.get('password'), data.get('display_name', data.get('username'))))
-        conn.commit()
-        user_id = c.lastrowid
-        conn.close()
-        session['user_id'] = user_id
-        session['username'] = data['username']
-        session['display_name'] = data.get('display_name', data['username'])
-        return jsonify({'success': True, 'display_name': session['display_name']})
-    except sqlite3.IntegrityError:
-        conn.close()
-        return jsonify({'success': False, 'error': 'Username already taken'}), 409
+    session['user_id'] = user['id']
+    session['username'] = user['username']
+    session['display_name'] = user['display_name'] or user['email'] or user['username']
+    return jsonify({'success': True, 'display_name': session['display_name'], 'username': user['username']})
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():

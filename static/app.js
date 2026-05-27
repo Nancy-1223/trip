@@ -20,6 +20,7 @@ let selectedImageData = null;
 let isAuthenticated = false;
 let mapUserHasInteracted = false;
 let lastAutoFitRouteKey = null;
+let pendingSignupEmail = '';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
@@ -45,6 +46,7 @@ function switchAuthTab(tab) {
     document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', (i === 0) === (tab === 'login')));
     document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
     document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
+    document.getElementById('otp-form').classList.add('hidden');
 }
 
 async function doLogin() {
@@ -54,7 +56,7 @@ async function doLogin() {
     errEl.classList.add('hidden');
     if (!username || !password) { errEl.textContent = 'Email and password are required'; errEl.classList.remove('hidden'); return; }
     try {
-        const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password }) });
+        const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: username, password }) });
         const data = await res.json();
         if (res.ok && data.success) {
             isAuthenticated = true;
@@ -69,25 +71,56 @@ async function doLogin() {
 }
 
 async function doRegister() {
-    const display_name = document.getElementById('reg-name').value.trim();
-    const username = document.getElementById('reg-username').value.trim();
+    const email = document.getElementById('reg-email').value.trim().toLowerCase();
     const password = document.getElementById('reg-password').value;
     const errEl = document.getElementById('reg-error');
     errEl.classList.add('hidden');
-    if (!username || !password) { errEl.textContent = 'Username and password required.'; errEl.classList.remove('hidden'); return; }
+    if (!email || !password) { errEl.textContent = 'Email and password are required'; errEl.classList.remove('hidden'); return; }
     try {
-        const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username, password, display_name: display_name || username }) });
+        const res = await fetch('/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
         const data = await res.json();
-        if (data.success) {
-            isAuthenticated = true;
-            document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
-            showView('dashboard-view');
-            loadTrips();
+        if (res.ok && data.success) {
+            pendingSignupEmail = email;
+            document.getElementById('register-form').classList.add('hidden');
+            document.getElementById('otp-form').classList.remove('hidden');
+            document.getElementById('otp-input').value = '';
+            document.getElementById('otp-error').classList.add('hidden');
+            document.getElementById('otp-success').classList.add('hidden');
+            document.getElementById('otp-input').focus();
         } else {
             errEl.textContent = data.error || 'Registration failed.';
             errEl.classList.remove('hidden');
         }
     } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
+}
+
+async function verifyOtp() {
+    const otp = document.getElementById('otp-input').value.trim();
+    const errEl = document.getElementById('otp-error');
+    const successEl = document.getElementById('otp-success');
+    errEl.classList.add('hidden');
+    successEl.classList.add('hidden');
+    if (!otp) { errEl.textContent = 'Enter the OTP'; errEl.classList.remove('hidden'); return; }
+    try {
+        const res = await fetch('/verify-otp', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ email: pendingSignupEmail, otp })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            successEl.textContent = 'Email verified successfully';
+            successEl.classList.remove('hidden');
+            document.getElementById('login-username').value = pendingSignupEmail;
+            setTimeout(() => switchAuthTab('login'), 1200);
+        } else {
+            errEl.textContent = data.error || 'Invalid OTP';
+            errEl.classList.remove('hidden');
+        }
+    } catch {
+        errEl.textContent = 'Network error.';
+        errEl.classList.remove('hidden');
+    }
 }
 
 async function doLogout() {
@@ -153,7 +186,6 @@ function renderTripsList() {
                 <div>
                     <div class="trip-dest">${t.destination}</div>
                     <div class="trip-meta">${t.purpose} · ${new Date(t.created_at).toLocaleDateString('en-IN')}</div>
-                    ${t.cost > 0 ? `<div class="trip-cost-badge">₹${Number(t.cost).toLocaleString('en-IN')}</div>` : ''}
                 </div>
             </div>
             <button class="icon-btn blue" onclick="showTripDetail(${t.id})"><i data-lucide="chevron-right"></i></button>
@@ -165,7 +197,7 @@ function renderTripsList() {
 function showTripDetail(tripId) {
     const t = allTrips.find(x => x.id === tripId);
     if (!t) return;
-    showToast(`${t.destination} — ₹${Number(t.cost).toLocaleString('en-IN')}`);
+    showToast(`${t.destination}`);
 }
 
 // ─── Trip Setup Modal ─────────────────────────────────────────────────────────
@@ -352,7 +384,7 @@ async function startTrip() {
                 destination: dest, 
                 start_loc: start,
                 purpose: tripPurpose,
-                cost: 0
+                distance: 0
             })
         });
         const data = await res.json();
@@ -1099,7 +1131,6 @@ async function openHistoryView() {
             <div class="history-dest">${escHtml(t.destination)}</div>
             <div class="history-meta">
                 <span class="history-tag purpose">${t.purpose}</span>
-                ${t.cost > 0 ? `<span class="history-tag cost">₹${Number(t.cost).toLocaleString('en-IN')}</span>` : ''}
                 ${t.distance > 0 ? `<span class="history-tag date">📍 ${t.distance} km</span>` : ''}
                 <span class="history-tag date">${new Date(t.created_at).toLocaleDateString('en-IN')}</span>
             </div>
@@ -1163,10 +1194,6 @@ function initPlannerMap() {
         
         document.getElementById('p-dist').textContent = distKM.toFixed(1) + ' km';
         document.getElementById('p-time').textContent = timeMin + ' min';
-        
-        // Approx cost: ₹8 per km + ₹500 base per day (assumed)
-        const estCost = Math.round(distKM * 8 + 500);
-        document.getElementById('p-cost').textContent = '₹' + estCost.toLocaleString('en-IN');
         
         discoverAlongRoute(routes[0].coordinates);
     });
@@ -1278,9 +1305,7 @@ async function confirmPlannerTrip() {
     const dest = document.getElementById('p-end').value.trim();
     const start = document.getElementById('p-start').value.trim();
     const distText = document.getElementById('p-dist').textContent;
-    const costText = document.getElementById('p-cost').textContent;
     const distance = parseFloat(distText) || 0;
-    const totalNum = parseFloat(costText.replace(/[^0-9.]/g, '')) || 0;
 
     if (!dest || distance === 0) { showToast('Plan a valid route first!'); return; }
     await updatePlannerRoute();
@@ -1320,7 +1345,6 @@ async function confirmPlannerTrip() {
                 destination: dest,
                 start_loc: start,
                 purpose: 'Tour',
-                cost: totalNum,
                 vehicle_type: 'car'
             })
         });
