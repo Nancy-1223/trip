@@ -4,8 +4,9 @@ TripMate
 Email OTP signup uses the Resend HTTP API.
 
 - `RESEND_API_KEY`
-- `RESEND_FROM_EMAIL` (optional, defaults to `TripMate <onboarding@resend.dev>`)
 - `RESEND_TIMEOUT` (optional, defaults to `20` seconds)
+
+Testing sender: `TripMate <onboarding@resend.dev>`.
 
 If the Resend API key is missing or sending fails during development, signup still continues and the OTP is printed in the backend logs.
 

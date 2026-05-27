@@ -18,8 +18,9 @@ app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
 
 # Resend email API configuration is read from environment variables:
-# RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_TIMEOUT
+# RESEND_API_KEY, RESEND_TIMEOUT
 OTP_EXPIRY_MINUTES = 5
+RESEND_FROM_EMAIL = 'TripMate <onboarding@resend.dev>'
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -147,13 +148,13 @@ def index():
 
 def send_otp_email(email, otp):
     api_key = os.environ.get('RESEND_API_KEY')
-    from_email = os.environ.get('RESEND_FROM_EMAIL') or os.environ.get('RESEND_FROM') or 'TripMate <onboarding@resend.dev>'
     try:
         timeout = int(os.environ.get('RESEND_TIMEOUT', '20'))
     except ValueError:
         timeout = 20
 
     print(f'[TripMate] Resend API key loaded: {"yes" if api_key else "no"}')
+    print(f'[TripMate] Resend sender: {RESEND_FROM_EMAIL}')
     print(f'[TripMate] OTP generated for {email}: {otp}')
 
     if not api_key:
@@ -162,7 +163,7 @@ def send_otp_email(email, otp):
         return False
 
     payload = json.dumps({
-        'from': from_email,
+        'from': RESEND_FROM_EMAIL,
         'to': [email],
         'subject': 'TripMate Email Verification OTP',
         'text': (
@@ -193,6 +194,10 @@ def send_otp_email(email, otp):
     except urllib.error.HTTPError as exc:
         response_body = exc.read().decode('utf-8', errors='replace')
         print(f'[TripMate] Resend email failed for {email}: HTTP {exc.code} {response_body}')
+        print(f'[TripMate] Development OTP for {email}: {otp}')
+        return False
+    except urllib.error.URLError as exc:
+        print(f'[TripMate] Resend email failed for {email}: URL error: {exc.reason}')
         print(f'[TripMate] Development OTP for {email}: {otp}')
         return False
     except Exception as exc:
