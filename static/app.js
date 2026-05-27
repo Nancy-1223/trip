@@ -123,6 +123,38 @@ async function verifyOtp() {
     }
 }
 
+async function resendOtp() {
+    const errEl = document.getElementById('otp-error');
+    const successEl = document.getElementById('otp-success');
+    errEl.classList.add('hidden');
+    successEl.classList.add('hidden');
+    if (!pendingSignupEmail) {
+        errEl.textContent = 'Email is required';
+        errEl.classList.remove('hidden');
+        return;
+    }
+    try {
+        const res = await fetch('/resend-otp', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ email: pendingSignupEmail })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            successEl.textContent = data.message || 'OTP sent to email';
+            successEl.classList.remove('hidden');
+            document.getElementById('otp-input').value = '';
+            document.getElementById('otp-input').focus();
+        } else {
+            errEl.textContent = data.error || 'Could not resend OTP';
+            errEl.classList.remove('hidden');
+        }
+    } catch {
+        errEl.textContent = 'Network error.';
+        errEl.classList.remove('hidden');
+    }
+}
+
 async function doLogout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     isAuthenticated = false;

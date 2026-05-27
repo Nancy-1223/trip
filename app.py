@@ -19,7 +19,7 @@ app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
 
 # SMTP configuration is read from environment variables:
-# SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, SMTP_USE_TLS
+# SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_USE_TLS
 OTP_EXPIRY_MINUTES = 5
 
 def init_db():
@@ -149,25 +149,37 @@ def index():
 def send_otp_email(email, otp):
     host = os.environ.get('SMTP_HOST')
     port = int(os.environ.get('SMTP_PORT', '587'))
-    username = os.environ.get('SMTP_USERNAME')
-    password = os.environ.get('SMTP_PASSWORD')
-    from_email = os.environ.get('SMTP_FROM_EMAIL') or username
+    username = os.environ.get('SMTP_USER') or os.environ.get('SMTP_USERNAME')
+    password = os.environ.get('SMTP_PASS') or os.environ.get('SMTP_PASSWORD')
+    from_email = os.environ.get('SMTP_FROM') or os.environ.get('SMTP_FROM_EMAIL') or username
     use_tls = os.environ.get('SMTP_USE_TLS', 'true').lower() != 'false'
 
     if not host or not username or not password or not from_email:
-        raise RuntimeError('Email service is not configured')
+        print('[TripMate] SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM to send OTP email.')
+        print(f'[TripMate] Development OTP for {email}: {otp}')
+        return False
 
     message = EmailMessage()
-    message['Subject'] = 'TripMate email verification OTP'
+    message['Subject'] = 'TripMate Email Verification OTP'
     message['From'] = from_email
     message['To'] = email
-    message.set_content(f'Your TripMate verification OTP is {otp}. It expires in 5 minutes.')
+    message.set_content(
+        f'Your TripMate verification OTP is: {otp}\n\n'
+        'This OTP is valid for 5 minutes.'
+    )
 
-    with smtplib.SMTP(host, port, timeout=15) as smtp:
-        if use_tls:
-            smtp.starttls()
-        smtp.login(username, password)
-        smtp.send_message(message)
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as smtp:
+            if use_tls:
+                smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(message)
+        print(f'[TripMate] OTP email sent to {email}')
+        return True
+    except Exception as exc:
+        print(f'[TripMate] SMTP send failed for {email}: {exc}')
+        print(f'[TripMate] Development OTP for {email}: {otp}')
+        return False
 
 def create_pending_user(email, password):
     otp = f'{random.randint(0, 999999):06d}'
@@ -195,6 +207,26 @@ def create_pending_user(email, password):
     conn.close()
     return otp, None, None
 
+def issue_new_otp(email):
+    otp = f'{random.randint(0, 999999):06d}'
+    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
+
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    user = c.execute('SELECT id, is_verified FROM users WHERE email=? OR username=?', (email, email)).fetchone()
+    if not user:
+        conn.close()
+        return None, jsonify({'success': False, 'error': 'User not found'}), 404
+    if user['is_verified']:
+        conn.close()
+        return None, jsonify({'success': False, 'error': 'Email already verified'}), 400
+
+    c.execute('UPDATE users SET otp_code=?, otp_expires_at=? WHERE id=?', (otp, expires_at, user['id']))
+    conn.commit()
+    conn.close()
+    return otp, None, None
+
 @app.route('/signup', methods=['POST'])
 @app.route('/api/auth/register', methods=['POST'])
 def signup():
@@ -208,12 +240,9 @@ def signup():
     if response:
         return response, status
 
-    try:
-        send_otp_email(email, otp)
-    except Exception as exc:
-        return jsonify({'success': False, 'error': 'Could not send OTP email. Check SMTP configuration.'}), 500
-
-    return jsonify({'success': True, 'message': 'OTP sent to email'})
+    email_sent = send_otp_email(email, otp)
+    message = 'OTP sent to email' if email_sent else 'SMTP unavailable. OTP printed in backend logs.'
+    return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
 
 @app.route('/verify-otp', methods=['POST'])
 def verify_otp():
@@ -236,12 +265,27 @@ def verify_otp():
         expires_at = datetime.min
     if datetime.utcnow() > expires_at:
         conn.close()
-        return jsonify({'success': False, 'error': 'OTP expired'}), 400
+        return jsonify({'success': False, 'error': 'OTP expired, request new OTP'}), 400
 
     c.execute('UPDATE users SET is_verified=1, otp_code=NULL, otp_expires_at=NULL WHERE id=?', (user['id'],))
     conn.commit()
     conn.close()
     return jsonify({'success': True, 'message': 'Email verified successfully'})
+
+@app.route('/resend-otp', methods=['POST'])
+def resend_otp():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'success': False, 'error': 'Email is required'}), 400
+
+    otp, response, status = issue_new_otp(email)
+    if response:
+        return response, status
+
+    email_sent = send_otp_email(email, otp)
+    message = 'OTP sent to email' if email_sent else 'SMTP unavailable. OTP printed in backend logs.'
+    return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
 
 @app.route('/login', methods=['POST'])
 @app.route('/api/auth/login', methods=['POST'])
