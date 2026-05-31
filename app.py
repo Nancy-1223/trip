@@ -347,7 +347,13 @@ def email_failure_response(delivery):
         'delivery_error': delivery['error'],
     }), status
 
-def create_pending_user(email, password):
+def get_display_name(display_name, email, username=''):
+    if display_name and display_name.strip() and '@' not in display_name:
+        return display_name.strip()
+    fallback = (email or username or 'Traveler').split('@', 1)[0].strip()
+    return fallback.capitalize() or 'Traveler'
+
+def create_pending_user(email, password, full_name):
     otp = f'{secrets.randbelow(1000000):06d}'
     expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
     password_hash = generate_password_hash(password)
@@ -363,12 +369,12 @@ def create_pending_user(email, password):
         c.execute('''UPDATE users SET username=?, password=?, email=?, password_hash=?, otp_code=?,
                      otp_expires_at=?, is_verified=0, display_name=?
                      WHERE id=?''',
-                  (email, '', email, password_hash, otp, expires_at, email, existing['id']))
+                  (email, '', email, password_hash, otp, expires_at, full_name, existing['id']))
     else:
         c.execute('''INSERT INTO users (username, password, email, password_hash, display_name,
                      otp_code, otp_expires_at, is_verified)
                      VALUES (?, ?, ?, ?, ?, ?, ?, 0)''',
-                  (email, '', email, password_hash, email, otp, expires_at))
+                  (email, '', email, password_hash, full_name, otp, expires_at))
     conn.commit()
     conn.close()
     return otp, None, None
@@ -399,10 +405,11 @@ def signup():
     data = request.get_json(silent=True) or {}
     email = (data.get('email') or data.get('username') or '').strip().lower()
     password = data.get('password') or ''
-    if not email or not password:
-        return jsonify({'success': False, 'error': 'Email and password are required'}), 400
+    full_name = (data.get('full_name') or data.get('name') or '').strip()
+    if not full_name or not email or not password:
+        return jsonify({'success': False, 'error': 'Full name, email and password are required'}), 400
 
-    otp, response, status = create_pending_user(email, password)
+    otp, response, status = create_pending_user(email, password, full_name)
     if response:
         return response, status
 
@@ -506,8 +513,13 @@ def login():
 
     session['user_id'] = user['id']
     session['username'] = user['username']
-    session['display_name'] = user['display_name'] or user['email'] or user['username']
-    return jsonify({'success': True, 'display_name': session['display_name'], 'username': user['username']})
+    session['display_name'] = get_display_name(user['display_name'], user['email'], user['username'])
+    return jsonify({
+        'success': True,
+        'name': session['display_name'],
+        'display_name': session['display_name'],
+        'username': user['username'],
+    })
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
@@ -517,7 +529,21 @@ def logout():
 @app.route('/api/auth/me')
 def me():
     if 'user_id' in session:
-        return jsonify({'logged_in': True, 'display_name': session.get('display_name'), 'username': session.get('username')})
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        user = conn.execute('SELECT username, email, display_name FROM users WHERE id=?', (session['user_id'],)).fetchone()
+        conn.close()
+        if not user:
+            session.clear()
+            return jsonify({'logged_in': False})
+        display_name = get_display_name(user['display_name'], user['email'], user['username'])
+        session['display_name'] = display_name
+        return jsonify({
+            'logged_in': True,
+            'name': display_name,
+            'display_name': display_name,
+            'username': user['username'],
+        })
     return jsonify({'logged_in': False})
 
 # ── Trips ─────────────────────────────────────────────────────────────────────

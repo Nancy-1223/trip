@@ -41,6 +41,7 @@ class AuthEmailTests(unittest.TestCase):
         delivery = {'success': True, 'provider_response': {'id': 'email_123'}, 'attempts': 1}
         with patch.object(backend, 'send_otp_email', return_value=delivery) as send_otp:
             response = self.client.post('/signup', json={
+                'full_name': 'Nancy Nataz',
                 'email': 'new@example.com',
                 'password': 'secret-password',
             })
@@ -51,11 +52,12 @@ class AuthEmailTests(unittest.TestCase):
         self.assertEqual(recipient, 'new@example.com')
         self.assertRegex(otp, r'^\d{6}$')
         with sqlite3.connect(backend.DB_FILE) as conn:
-            stored_otp = conn.execute(
-                'SELECT otp_code FROM users WHERE email=?',
+            stored_otp, display_name = conn.execute(
+                'SELECT otp_code, display_name FROM users WHERE email=?',
                 ('new@example.com',),
-            ).fetchone()[0]
+            ).fetchone()
         self.assertEqual(stored_otp, otp)
+        self.assertEqual(display_name, 'Nancy Nataz')
 
     def test_signup_reports_delivery_failure(self):
         delivery = {
@@ -67,12 +69,39 @@ class AuthEmailTests(unittest.TestCase):
         }
         with patch.object(backend, 'send_otp_email', return_value=delivery):
             response = self.client.post('/signup', json={
+                'full_name': 'Nancy Nataz',
                 'email': 'new@example.com',
                 'password': 'secret-password',
             })
 
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.get_json()['success'])
+
+    def test_login_and_profile_fall_back_to_capitalized_email_prefix(self):
+        with sqlite3.connect(backend.DB_FILE) as conn:
+            conn.execute(
+                '''INSERT INTO users
+                   (username, password, email, password_hash, display_name, is_verified)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (
+                    'nancynataz@gmail.com',
+                    '',
+                    'nancynataz@gmail.com',
+                    backend.generate_password_hash('secret-password'),
+                    'nancynataz@gmail.com',
+                    1,
+                ),
+            )
+
+        login_response = self.client.post('/login', json={
+            'email': 'nancynataz@gmail.com',
+            'password': 'secret-password',
+        })
+        profile_response = self.client.get('/api/auth/me')
+
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(login_response.get_json()['name'], 'Nancynataz')
+        self.assertEqual(profile_response.get_json()['name'], 'Nancynataz')
 
     def test_send_email_retries_transient_provider_error(self):
         provider_error = urllib.error.HTTPError(

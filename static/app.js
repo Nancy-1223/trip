@@ -71,13 +71,14 @@ async function doLogin() {
 }
 
 async function doRegister() {
+    const fullName = document.getElementById('reg-full-name').value.trim();
     const email = document.getElementById('reg-email').value.trim().toLowerCase();
     const password = document.getElementById('reg-password').value;
     const errEl = document.getElementById('reg-error');
     errEl.classList.add('hidden');
-    if (!email || !password) { errEl.textContent = 'Email and password are required'; errEl.classList.remove('hidden'); return; }
+    if (!fullName || !email || !password) { errEl.textContent = 'Full name, email and password are required'; errEl.classList.remove('hidden'); return; }
     try {
-        const res = await fetch('/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) });
+        const res = await fetch('/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ full_name: fullName, email, password }) });
         const data = await res.json();
         if (res.ok && data.success) {
             pendingSignupEmail = email;
