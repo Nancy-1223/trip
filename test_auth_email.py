@@ -1,19 +1,17 @@
-import io
-import json
 import os
+import smtplib
 import sqlite3
 import tempfile
 import unittest
-import urllib.error
 from unittest.mock import patch
 
 import app as backend
 
 
-class FakeResponse:
-    def __init__(self, status=200, body=b'{"id":"email_123"}'):
-        self.status = status
-        self.body = body
+class FakeSMTP:
+    def __init__(self):
+        self.login_args = None
+        self.message = None
 
     def __enter__(self):
         return self
@@ -21,8 +19,12 @@ class FakeResponse:
     def __exit__(self, exc_type, exc_value, traceback):
         return False
 
-    def read(self):
-        return self.body
+    def login(self, email, app_password):
+        self.login_args = (email, app_password)
+
+    def send_message(self, message):
+        self.message = message
+        return {}
 
 
 class AuthEmailTests(unittest.TestCase):
@@ -62,7 +64,7 @@ class AuthEmailTests(unittest.TestCase):
     def test_signup_reports_delivery_failure(self):
         delivery = {
             'success': False,
-            'error': 'RESEND_API_KEY is missing',
+            'error': 'GMAIL_APP_PASSWORD is missing',
             'error_type': 'configuration_error',
             'provider_response': None,
             'attempts': 0,
@@ -104,44 +106,30 @@ class AuthEmailTests(unittest.TestCase):
         self.assertEqual(profile_response.get_json()['name'], 'Nancynataz')
 
     def test_send_email_retries_transient_provider_error(self):
-        provider_error = urllib.error.HTTPError(
-            backend.RESEND_API_URL,
-            503,
-            'Service unavailable',
-            hdrs=None,
-            fp=io.BytesIO(b'{"message":"try again"}'),
-        )
+        provider_error = smtplib.SMTPServerDisconnected('try again')
+        smtp = FakeSMTP()
         env = {
-            'RESEND_API_KEY': 're_test',
-            'RESEND_FROM_EMAIL': 'TripMate <no-reply@example.com>',
-            'RESEND_MAX_RETRIES': '1',
-            'RESEND_RETRY_DELAY': '0',
+            'GMAIL_EMAIL': 'tripmate@gmail.com',
+            'GMAIL_APP_PASSWORD': 'app-password',
+            'SMTP_MAX_RETRIES': '1',
+            'SMTP_RETRY_DELAY': '0',
         }
         with patch.dict(os.environ, env, clear=False):
             with patch.object(
-                backend.urllib.request,
-                'urlopen',
-                side_effect=[provider_error, FakeResponse()],
-            ) as urlopen:
+                backend.smtplib,
+                'SMTP_SSL',
+                side_effect=[provider_error, smtp],
+            ) as smtp_ssl:
                 delivery = backend.send_email('person@example.com', 'Subject', 'Body')
 
         self.assertTrue(delivery['success'])
         self.assertEqual(delivery['attempts'], 2)
-        first_request = urlopen.call_args_list[0].args[0]
-        second_request = urlopen.call_args_list[1].args[0]
-        self.assertEqual(
-            first_request.get_header('Idempotency-key'),
-            second_request.get_header('Idempotency-key'),
-        )
-        self.assertEqual(
-            json.loads(first_request.data),
-            {
-                'from': 'TripMate <no-reply@example.com>',
-                'to': ['person@example.com'],
-                'subject': 'Subject',
-                'text': 'Body',
-            },
-        )
+        self.assertEqual(smtp_ssl.call_count, 2)
+        self.assertEqual(smtp.login_args, ('tripmate@gmail.com', 'app-password'))
+        self.assertEqual(smtp.message['From'], 'tripmate@gmail.com')
+        self.assertEqual(smtp.message['To'], 'person@example.com')
+        self.assertEqual(smtp.message['Subject'], 'Subject')
+        self.assertEqual(smtp.message.get_content().strip(), 'Body')
 
     def test_test_email_endpoint_requires_secret_and_returns_provider_response(self):
         delivery = {'success': True, 'provider_response': {'id': 'email_456'}, 'attempts': 1}

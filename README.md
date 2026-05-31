@@ -1,17 +1,17 @@
 TripMate
 ========
 
-Email OTP signup uses the Resend HTTP API.
+Email OTP signup uses Gmail SMTP with a Google App Password.
 
-- `RESEND_API_KEY`
-- `RESEND_FROM_EMAIL` (use a sender on a verified Resend domain in production)
-- `RESEND_TIMEOUT` (optional, defaults to `20` seconds)
-- `RESEND_MAX_RETRIES` (optional, defaults to `2`)
-- `RESEND_RETRY_DELAY` (optional, defaults to `0.5` seconds)
+Google setup references: [App Passwords](https://support.google.com/accounts/answer/185833) and [Gmail SMTP configuration](https://support.google.com/a/answer/176600).
+
+- `GMAIL_EMAIL`
+- `GMAIL_APP_PASSWORD`
+- `SMTP_TIMEOUT` (optional, defaults to `20` seconds)
+- `SMTP_MAX_RETRIES` (optional, defaults to `2`)
+- `SMTP_RETRY_DELAY` (optional, defaults to `0.5` seconds)
 - `TEST_EMAIL_API_KEY` (required to call `POST /test-email`)
 - `LOG_OTP_CODES` (optional development-only setting; set to `true` to log OTP codes)
-
-Testing sender: `TripMate <onboarding@resend.dev>`. Resend only allows this sender to email the address associated with your Resend account. For real users, verify your own domain in Resend and set a sender such as `TripMate <no-reply@updates.example.com>`.
 
 `POST /test-email` sends a diagnostic message to any requested address when the caller supplies the deployment secret:
 
@@ -24,16 +24,18 @@ curl -X POST https://your-service.onrender.com/test-email \
 
 Render deployment:
 
-1. In the Resend dashboard, add your sending domain and complete DNS verification.
-2. In the TripMate Render service dashboard, open **Environment**.
-3. Add `RESEND_API_KEY` with your Resend API key.
-4. Add `RESEND_FROM_EMAIL` using your verified domain, for example `TripMate <no-reply@updates.example.com>`.
-5. Add `TEST_EMAIL_API_KEY` with a long random secret used only for the diagnostic endpoint.
-6. Optionally add `RESEND_TIMEOUT`, `RESEND_MAX_RETRIES`, and `RESEND_RETRY_DELAY` to override their defaults.
-7. Leave `LOG_OTP_CODES` unset or set it to `false` in production.
-8. Deploy the latest commit from Render.
-9. Open the Render logs and confirm `Email delivery configuration validation passed`.
-10. Call `POST /test-email` with the curl command above and confirm the JSON response contains `"success": true`.
-11. Complete a normal signup and confirm that the OTP email arrives.
+1. Enable 2-Step Verification for the Google account that will send TripMate OTP emails.
+2. In the Google account security settings, create an App Password for TripMate.
+3. In the TripMate Render service dashboard, open **Environment**.
+4. Add `GMAIL_EMAIL` with the complete Gmail address used to send OTP emails.
+5. Add `GMAIL_APP_PASSWORD` with the generated App Password. Do not use your normal Gmail password.
+6. Add `TEST_EMAIL_API_KEY` with a long random secret used only for the diagnostic endpoint.
+7. Optionally add `SMTP_TIMEOUT`, `SMTP_MAX_RETRIES`, and `SMTP_RETRY_DELAY` to override their defaults.
+8. Leave `LOG_OTP_CODES` unset or set it to `false` in production.
+9. Remove environment variables from the previous email provider configuration.
+10. Deploy the latest commit from Render.
+11. Open the Render logs and confirm `Gmail SMTP configuration validation passed`.
+12. Call `POST /test-email` with the curl command above and confirm the JSON response contains `"success": true`.
+13. Complete a normal signup and confirm that the OTP email arrives.
 
 Passwords are stored as hashes. Signup OTPs expire after 5 minutes. Delivery failures are logged and returned as errors so they are visible during deployment checks.

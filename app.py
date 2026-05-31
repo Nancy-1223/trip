@@ -5,9 +5,12 @@ import json
 import base64
 import logging
 import secrets
+import smtplib
+import socket
+import ssl
 import time
-import uuid
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from functools import wraps
 import urllib.error
 import urllib.request
@@ -20,12 +23,11 @@ app = Flask(__name__, static_folder=static_dir, template_folder=template_dir)
 app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
 
-# Resend email API configuration is read from environment variables:
-# RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_TIMEOUT, RESEND_MAX_RETRIES
+# Gmail SMTP configuration is read from environment variables:
+# GMAIL_EMAIL, GMAIL_APP_PASSWORD, SMTP_TIMEOUT, SMTP_MAX_RETRIES
 OTP_EXPIRY_MINUTES = 5
-RESEND_TEST_FROM_EMAIL = 'onboarding@resend.dev'
-RESEND_API_URL = 'https://api.resend.com/emails'
-RETRYABLE_EMAIL_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+GMAIL_SMTP_HOST = 'smtp.gmail.com'
+GMAIL_SMTP_PORT = 465
 logger = logging.getLogger('tripmate')
 logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO').upper())
 
@@ -176,29 +178,24 @@ def get_float_env(name, default, minimum=0):
     return value
 
 def get_email_config():
-    api_key = os.environ.get('RESEND_API_KEY', '').strip()
-    from_email = os.environ.get('RESEND_FROM_EMAIL', '').strip()
+    gmail_email = os.environ.get('GMAIL_EMAIL', '').strip()
+    app_password = os.environ.get('GMAIL_APP_PASSWORD', '').replace(' ', '')
     errors = []
-    if not api_key:
-        errors.append('RESEND_API_KEY is missing')
-    if not from_email or '@' not in from_email:
-        errors.append('RESEND_FROM_EMAIL is missing or invalid')
-    if RESEND_TEST_FROM_EMAIL in from_email.lower():
-        logger.warning(
-            'RESEND_FROM_EMAIL uses onboarding@resend.dev; Resend limits this testing sender '
-            'to the email address associated with the Resend account'
-        )
+    if not gmail_email or '@' not in gmail_email:
+        errors.append('GMAIL_EMAIL is missing or invalid')
+    if not app_password:
+        errors.append('GMAIL_APP_PASSWORD is missing')
     logger.info(
-        'Resend configuration loaded api_key=%s from=%s',
-        'yes' if api_key else 'no',
-        from_email or '<missing>',
+        'Gmail SMTP configuration loaded email=%s app_password=%s',
+        gmail_email or '<missing>',
+        'yes' if app_password else 'no',
     )
     return {
-        'api_key': api_key,
-        'from_email': from_email,
-        'timeout': get_int_env('RESEND_TIMEOUT', 20, minimum=1),
-        'max_retries': get_int_env('RESEND_MAX_RETRIES', 2, minimum=0),
-        'retry_delay': get_float_env('RESEND_RETRY_DELAY', 0.5, minimum=0),
+        'gmail_email': gmail_email,
+        'app_password': app_password,
+        'timeout': get_int_env('SMTP_TIMEOUT', 20, minimum=1),
+        'max_retries': get_int_env('SMTP_MAX_RETRIES', 2, minimum=0),
+        'retry_delay': get_float_env('SMTP_RETRY_DELAY', 0.5, minimum=0),
         'errors': errors,
     }
 
@@ -207,17 +204,9 @@ def validate_email_config_at_startup():
     if config['errors']:
         logger.error('Email delivery is not ready: %s', '; '.join(config['errors']))
     else:
-        logger.info('Email delivery configuration validation passed')
+        logger.info('Gmail SMTP configuration validation passed')
 
 validate_email_config_at_startup()
-
-def parse_provider_response(response_body):
-    if not response_body:
-        return {}
-    try:
-        return json.loads(response_body)
-    except json.JSONDecodeError:
-        return {'raw_response': response_body}
 
 def send_email(email, subject, text):
     config = get_email_config()
@@ -232,86 +221,102 @@ def send_email(email, subject, text):
             'attempts': 0,
         }
 
-    payload = json.dumps({
-        'from': config['from_email'],
-        'to': [email],
-        'subject': subject,
-        'text': text,
-    }).encode('utf-8')
-    idempotency_key = str(uuid.uuid4())
+    message = EmailMessage()
+    message['From'] = config['gmail_email']
+    message['To'] = email
+    message['Subject'] = subject
+    message.set_content(text)
     attempts = config['max_retries'] + 1
 
     for attempt in range(1, attempts + 1):
-        request_obj = urllib.request.Request(
-            RESEND_API_URL,
-            data=payload,
-            headers={
-                'Authorization': f'Bearer {config["api_key"]}',
-                'Content-Type': 'application/json',
-                'User-Agent': 'TripMate/1.0',
-                'Idempotency-Key': idempotency_key,
-            },
-            method='POST',
-        )
         logger.info(
-            'Email request sent provider=resend recipient=%s from=%s attempt=%s/%s',
+            'Email request sent provider=gmail_smtp recipient=%s from=%s attempt=%s/%s',
             email,
-            config['from_email'],
+            config['gmail_email'],
             attempt,
             attempts,
         )
         try:
-            with urllib.request.urlopen(request_obj, timeout=config['timeout']) as response:
-                response_body = response.read().decode('utf-8', errors='replace')
-                provider_response = parse_provider_response(response_body)
-                logger.info(
-                    'Email provider response provider=resend recipient=%s status=%s response=%s',
+            with smtplib.SMTP_SSL(
+                GMAIL_SMTP_HOST,
+                GMAIL_SMTP_PORT,
+                timeout=config['timeout'],
+                context=ssl.create_default_context(),
+            ) as smtp:
+                smtp.login(config['gmail_email'], config['app_password'])
+                refused_recipients = smtp.send_message(message)
+            if refused_recipients:
+                logger.error(
+                    'Email delivery error provider=gmail_smtp recipient=%s refused=%s',
                     email,
-                    response.status,
-                    provider_response,
+                    refused_recipients,
                 )
                 return {
-                    'success': True,
-                    'provider_response': provider_response,
-                    'attempts': attempt,
-                }
-        except urllib.error.HTTPError as exc:
-            response_body = exc.read().decode('utf-8', errors='replace')
-            provider_response = parse_provider_response(response_body)
-            logger.error(
-                'Email delivery error provider=resend recipient=%s status=%s response=%s attempt=%s/%s',
-                email,
-                exc.code,
-                provider_response,
-                attempt,
-                attempts,
-            )
-            if exc.code not in RETRYABLE_EMAIL_STATUS_CODES or attempt == attempts:
-                return {
                     'success': False,
-                    'error': f'Resend returned HTTP {exc.code}',
+                    'error': 'Gmail SMTP refused the recipient',
                     'error_type': 'provider_error',
-                    'provider_response': provider_response,
+                    'provider_response': {'refused_recipients': refused_recipients},
                     'attempts': attempt,
                 }
-        except urllib.error.URLError as exc:
-            logger.error(
-                'Email delivery error provider=resend recipient=%s reason=%s attempt=%s/%s',
+            provider_response = {
+                'provider': 'gmail_smtp',
+                'accepted_recipients': [email],
+            }
+            logger.info(
+                'Email provider response provider=gmail_smtp recipient=%s response=%s',
                 email,
-                exc.reason,
+                provider_response,
+            )
+            return {
+                'success': True,
+                'provider_response': provider_response,
+                'attempts': attempt,
+            }
+        except smtplib.SMTPAuthenticationError as exc:
+            logger.error(
+                'Email delivery authentication error provider=gmail_smtp recipient=%s code=%s error=%s',
+                email,
+                exc.smtp_code,
+                exc.smtp_error,
+            )
+            return {
+                'success': False,
+                'error': 'Gmail SMTP authentication failed. Check GMAIL_EMAIL and GMAIL_APP_PASSWORD.',
+                'error_type': 'configuration_error',
+                'provider_response': {'smtp_code': exc.smtp_code},
+                'attempts': attempt,
+            }
+        except smtplib.SMTPRecipientsRefused as exc:
+            logger.error(
+                'Email delivery error provider=gmail_smtp recipient=%s refused=%s',
+                email,
+                exc.recipients,
+            )
+            return {
+                'success': False,
+                'error': 'Gmail SMTP refused the recipient',
+                'error_type': 'provider_error',
+                'provider_response': {'refused_recipients': exc.recipients},
+                'attempts': attempt,
+            }
+        except (smtplib.SMTPException, socket.timeout, OSError) as exc:
+            logger.error(
+                'Email delivery error provider=gmail_smtp recipient=%s error=%s attempt=%s/%s',
+                email,
+                exc,
                 attempt,
                 attempts,
             )
             if attempt == attempts:
                 return {
                     'success': False,
-                    'error': f'Could not reach Resend: {exc.reason}',
+                    'error': f'Gmail SMTP delivery failed: {exc}',
                     'error_type': 'network_error',
                     'provider_response': None,
                     'attempts': attempt,
                 }
         except Exception as exc:
-            logger.exception('Unexpected email delivery error provider=resend recipient=%s', email)
+            logger.exception('Unexpected email delivery error provider=gmail_smtp recipient=%s', email)
             return {
                 'success': False,
                 'error': f'Unexpected email delivery error: {type(exc).__name__}',
