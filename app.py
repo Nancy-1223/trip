@@ -3,7 +3,10 @@ import sqlite3
 import os
 import json
 import base64
-import random
+import logging
+import secrets
+import time
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 import urllib.error
@@ -18,9 +21,13 @@ app.secret_key = 'tripmate_secret_2024'
 DB_FILE = 'database.db'
 
 # Resend email API configuration is read from environment variables:
-# RESEND_API_KEY, RESEND_TIMEOUT
+# RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_TIMEOUT, RESEND_MAX_RETRIES
 OTP_EXPIRY_MINUTES = 5
-RESEND_FROM_EMAIL = 'TripMate <onboarding@resend.dev>'
+RESEND_TEST_FROM_EMAIL = 'onboarding@resend.dev'
+RESEND_API_URL = 'https://api.resend.com/emails'
+RETRYABLE_EMAIL_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+logger = logging.getLogger('tripmate')
+logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO').upper())
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -146,67 +153,202 @@ def login_required(f):
 def index():
     return render_template('index.html')
 
-def send_otp_email(email, otp):
-    api_key = os.environ.get('RESEND_API_KEY')
+def get_int_env(name, default, minimum=0):
     try:
-        timeout = int(os.environ.get('RESEND_TIMEOUT', '20'))
+        value = int(os.environ.get(name, str(default)))
     except ValueError:
-        timeout = 20
+        logger.warning('%s must be an integer; using default=%s', name, default)
+        return default
+    if value < minimum:
+        logger.warning('%s must be at least %s; using default=%s', name, minimum, default)
+        return default
+    return value
 
-    print(f'[TripMate] Resend API key loaded: {"yes" if api_key else "no"}')
-    print(f'[TripMate] Resend sender: {RESEND_FROM_EMAIL}')
-    print(f'[TripMate] OTP generated for {email}: {otp}')
+def get_float_env(name, default, minimum=0):
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        logger.warning('%s must be a number; using default=%s', name, default)
+        return default
+    if value < minimum:
+        logger.warning('%s must be at least %s; using default=%s', name, minimum, default)
+        return default
+    return value
 
+def get_email_config():
+    api_key = os.environ.get('RESEND_API_KEY', '').strip()
+    from_email = os.environ.get('RESEND_FROM_EMAIL', '').strip()
+    errors = []
     if not api_key:
-        print('[TripMate] RESEND_API_KEY missing. Set RESEND_API_KEY to send OTP email.')
-        print(f'[TripMate] Development OTP for {email}: {otp}')
-        return False
+        errors.append('RESEND_API_KEY is missing')
+    if not from_email or '@' not in from_email:
+        errors.append('RESEND_FROM_EMAIL is missing or invalid')
+    if RESEND_TEST_FROM_EMAIL in from_email.lower():
+        logger.warning(
+            'RESEND_FROM_EMAIL uses onboarding@resend.dev; Resend limits this testing sender '
+            'to the email address associated with the Resend account'
+        )
+    logger.info(
+        'Resend configuration loaded api_key=%s from=%s',
+        'yes' if api_key else 'no',
+        from_email or '<missing>',
+    )
+    return {
+        'api_key': api_key,
+        'from_email': from_email,
+        'timeout': get_int_env('RESEND_TIMEOUT', 20, minimum=1),
+        'max_retries': get_int_env('RESEND_MAX_RETRIES', 2, minimum=0),
+        'retry_delay': get_float_env('RESEND_RETRY_DELAY', 0.5, minimum=0),
+        'errors': errors,
+    }
+
+def validate_email_config_at_startup():
+    config = get_email_config()
+    if config['errors']:
+        logger.error('Email delivery is not ready: %s', '; '.join(config['errors']))
+    else:
+        logger.info('Email delivery configuration validation passed')
+
+validate_email_config_at_startup()
+
+def parse_provider_response(response_body):
+    if not response_body:
+        return {}
+    try:
+        return json.loads(response_body)
+    except json.JSONDecodeError:
+        return {'raw_response': response_body}
+
+def send_email(email, subject, text):
+    config = get_email_config()
+    if config['errors']:
+        error = '; '.join(config['errors'])
+        logger.error('Email delivery configuration error recipient=%s error=%s', email, error)
+        return {
+            'success': False,
+            'error': error,
+            'error_type': 'configuration_error',
+            'provider_response': None,
+            'attempts': 0,
+        }
 
     payload = json.dumps({
-        'from': RESEND_FROM_EMAIL,
+        'from': config['from_email'],
         'to': [email],
-        'subject': 'TripMate Email Verification OTP',
-        'text': (
-            f'Your TripMate verification OTP is: {otp}\n\n'
-            f'This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.'
-        ),
+        'subject': subject,
+        'text': text,
     }).encode('utf-8')
-    request_obj = urllib.request.Request(
-        'https://api.resend.com/emails',
-        data=payload,
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-            'User-Agent': 'TripMate/1.0',
-        },
-        method='POST',
-    )
+    idempotency_key = str(uuid.uuid4())
+    attempts = config['max_retries'] + 1
 
-    try:
-        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
-            if response.status < 200 or response.status >= 300:
+    for attempt in range(1, attempts + 1):
+        request_obj = urllib.request.Request(
+            RESEND_API_URL,
+            data=payload,
+            headers={
+                'Authorization': f'Bearer {config["api_key"]}',
+                'Content-Type': 'application/json',
+                'User-Agent': 'TripMate/1.0',
+                'Idempotency-Key': idempotency_key,
+            },
+            method='POST',
+        )
+        logger.info(
+            'Email request sent provider=resend recipient=%s from=%s attempt=%s/%s',
+            email,
+            config['from_email'],
+            attempt,
+            attempts,
+        )
+        try:
+            with urllib.request.urlopen(request_obj, timeout=config['timeout']) as response:
                 response_body = response.read().decode('utf-8', errors='replace')
-                print(f'[TripMate] Resend email failed for {email}: HTTP {response.status} {response_body}')
-                print(f'[TripMate] Development OTP for {email}: {otp}')
-                return False
-        print(f'[TripMate] OTP email sent to {email}')
-        return True
-    except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode('utf-8', errors='replace')
-        print(f'[TripMate] Resend email failed for {email}: HTTP {exc.code} {response_body}')
-        print(f'[TripMate] Development OTP for {email}: {otp}')
-        return False
-    except urllib.error.URLError as exc:
-        print(f'[TripMate] Resend email failed for {email}: URL error: {exc.reason}')
-        print(f'[TripMate] Development OTP for {email}: {otp}')
-        return False
-    except Exception as exc:
-        print(f'[TripMate] Resend email failed for {email}: {type(exc).__name__}: {exc}')
-        print(f'[TripMate] Development OTP for {email}: {otp}')
-        return False
+                provider_response = parse_provider_response(response_body)
+                logger.info(
+                    'Email provider response provider=resend recipient=%s status=%s response=%s',
+                    email,
+                    response.status,
+                    provider_response,
+                )
+                return {
+                    'success': True,
+                    'provider_response': provider_response,
+                    'attempts': attempt,
+                }
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode('utf-8', errors='replace')
+            provider_response = parse_provider_response(response_body)
+            logger.error(
+                'Email delivery error provider=resend recipient=%s status=%s response=%s attempt=%s/%s',
+                email,
+                exc.code,
+                provider_response,
+                attempt,
+                attempts,
+            )
+            if exc.code not in RETRYABLE_EMAIL_STATUS_CODES or attempt == attempts:
+                return {
+                    'success': False,
+                    'error': f'Resend returned HTTP {exc.code}',
+                    'error_type': 'provider_error',
+                    'provider_response': provider_response,
+                    'attempts': attempt,
+                }
+        except urllib.error.URLError as exc:
+            logger.error(
+                'Email delivery error provider=resend recipient=%s reason=%s attempt=%s/%s',
+                email,
+                exc.reason,
+                attempt,
+                attempts,
+            )
+            if attempt == attempts:
+                return {
+                    'success': False,
+                    'error': f'Could not reach Resend: {exc.reason}',
+                    'error_type': 'network_error',
+                    'provider_response': None,
+                    'attempts': attempt,
+                }
+        except Exception as exc:
+            logger.exception('Unexpected email delivery error provider=resend recipient=%s', email)
+            return {
+                'success': False,
+                'error': f'Unexpected email delivery error: {type(exc).__name__}',
+                'error_type': 'unexpected_error',
+                'provider_response': None,
+                'attempts': attempt,
+            }
+        if config['retry_delay']:
+            time.sleep(config['retry_delay'] * attempt)
+
+def send_otp_email(email, otp):
+    logger.info('OTP generated recipient=%s expires_in_minutes=%s', email, OTP_EXPIRY_MINUTES)
+    if os.environ.get('LOG_OTP_CODES', '').strip().lower() == 'true':
+        logger.warning('Development OTP recipient=%s otp=%s', email, otp)
+    delivery = send_email(
+        email,
+        'TripMate Email Verification OTP',
+        f'Your TripMate verification OTP is: {otp}\n\n'
+        f'This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.',
+    )
+    if delivery['success']:
+        logger.info('OTP email accepted by provider recipient=%s', email)
+    else:
+        logger.error('OTP email delivery failed recipient=%s error=%s', email, delivery['error'])
+    return delivery
+
+def email_failure_response(delivery):
+    status = 503 if delivery['error_type'] == 'configuration_error' else 502
+    return jsonify({
+        'success': False,
+        'email_sent': False,
+        'error': 'OTP was generated, but the verification email could not be sent. Check the email configuration and try again.',
+        'delivery_error': delivery['error'],
+    }), status
 
 def create_pending_user(email, password):
-    otp = f'{random.randint(0, 999999):06d}'
+    otp = f'{secrets.randbelow(1000000):06d}'
     expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
     password_hash = generate_password_hash(password)
 
@@ -232,7 +374,7 @@ def create_pending_user(email, password):
     return otp, None, None
 
 def issue_new_otp(email):
-    otp = f'{random.randint(0, 999999):06d}'
+    otp = f'{secrets.randbelow(1000000):06d}'
     expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
 
     conn = sqlite3.connect(DB_FILE)
@@ -264,9 +406,10 @@ def signup():
     if response:
         return response, status
 
-    email_sent = send_otp_email(email, otp)
-    message = 'OTP sent to email' if email_sent else 'Email service unavailable. OTP printed in backend logs.'
-    return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
+    delivery = send_otp_email(email, otp)
+    if not delivery['success']:
+        return email_failure_response(delivery)
+    return jsonify({'success': True, 'message': 'OTP sent to email', 'email_sent': True})
 
 @app.route('/verify-otp', methods=['POST'])
 def verify_otp():
@@ -307,9 +450,40 @@ def resend_otp():
     if response:
         return response, status
 
-    email_sent = send_otp_email(email, otp)
-    message = 'OTP sent to email' if email_sent else 'Email service unavailable. OTP printed in backend logs.'
-    return jsonify({'success': True, 'message': message, 'email_sent': email_sent})
+    delivery = send_otp_email(email, otp)
+    if not delivery['success']:
+        return email_failure_response(delivery)
+    return jsonify({'success': True, 'message': 'OTP sent to email', 'email_sent': True})
+
+@app.route('/test-email', methods=['POST'])
+def test_email():
+    expected_key = os.environ.get('TEST_EMAIL_API_KEY', '')
+    provided_key = request.headers.get('X-Test-Email-Key', '')
+    if not expected_key:
+        return jsonify({
+            'success': False,
+            'error': 'TEST_EMAIL_API_KEY is not configured',
+        }), 503
+    if not secrets.compare_digest(provided_key, expected_key):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'success': False, 'error': 'Email is required'}), 400
+
+    delivery = send_email(
+        email,
+        'TripMate email delivery test',
+        'This is a TripMate email delivery test.',
+    )
+    status = 200 if delivery['success'] else (503 if delivery['error_type'] == 'configuration_error' else 502)
+    return jsonify({
+        'success': delivery['success'],
+        'provider_response': delivery['provider_response'],
+        'error': delivery.get('error'),
+        'attempts': delivery['attempts'],
+    }), status
 
 @app.route('/login', methods=['POST'])
 @app.route('/api/auth/login', methods=['POST'])
