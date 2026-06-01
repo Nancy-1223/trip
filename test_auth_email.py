@@ -12,6 +12,8 @@ class FakeSMTP:
     def __init__(self):
         self.login_args = None
         self.message = None
+        self.ehlo_count = 0
+        self.tls_enabled = False
 
     def __enter__(self):
         return self
@@ -21,6 +23,12 @@ class FakeSMTP:
 
     def login(self, email, app_password):
         self.login_args = (email, app_password)
+
+    def ehlo(self):
+        self.ehlo_count += 1
+
+    def starttls(self, context):
+        self.tls_enabled = context is not None
 
     def send_message(self, message):
         self.message = message
@@ -117,14 +125,17 @@ class AuthEmailTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False):
             with patch.object(
                 backend.smtplib,
-                'SMTP_SSL',
+                'SMTP',
                 side_effect=[provider_error, smtp],
-            ) as smtp_ssl:
+            ) as smtp_client:
                 delivery = backend.send_email('person@example.com', 'Subject', 'Body')
 
         self.assertTrue(delivery['success'])
         self.assertEqual(delivery['attempts'], 2)
-        self.assertEqual(smtp_ssl.call_count, 2)
+        self.assertEqual(smtp_client.call_count, 2)
+        self.assertEqual(smtp_client.call_args.args[:2], ('smtp.gmail.com', 587))
+        self.assertEqual(smtp.ehlo_count, 2)
+        self.assertTrue(smtp.tls_enabled)
         self.assertEqual(smtp.login_args, ('tripmate@gmail.com', 'app-password'))
         self.assertEqual(smtp.message['From'], 'tripmate@gmail.com')
         self.assertEqual(smtp.message['To'], 'person@example.com')

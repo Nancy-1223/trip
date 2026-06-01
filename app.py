@@ -27,7 +27,7 @@ DB_FILE = 'database.db'
 # GMAIL_EMAIL, GMAIL_APP_PASSWORD, SMTP_TIMEOUT, SMTP_MAX_RETRIES
 OTP_EXPIRY_MINUTES = 5
 GMAIL_SMTP_HOST = 'smtp.gmail.com'
-GMAIL_SMTP_PORT = 465
+GMAIL_SMTP_PORT = 587
 logger = logging.getLogger('tripmate')
 logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO').upper())
 
@@ -237,12 +237,14 @@ def send_email(email, subject, text):
             attempts,
         )
         try:
-            with smtplib.SMTP_SSL(
+            with smtplib.SMTP(
                 GMAIL_SMTP_HOST,
                 GMAIL_SMTP_PORT,
                 timeout=config['timeout'],
-                context=ssl.create_default_context(),
             ) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
                 smtp.login(config['gmail_email'], config['app_password'])
                 refused_recipients = smtp.send_message(message)
             if refused_recipients:

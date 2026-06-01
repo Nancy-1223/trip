@@ -5,6 +5,8 @@ Email OTP signup uses Gmail SMTP with a Google App Password.
 
 Google setup references: [App Passwords](https://support.google.com/accounts/answer/185833) and [Gmail SMTP configuration](https://support.google.com/a/answer/176600).
 
+SMTP connection: `smtp.gmail.com` on port `587` with STARTTLS enabled.
+
 - `GMAIL_EMAIL`
 - `GMAIL_APP_PASSWORD`
 - `SMTP_TIMEOUT` (optional, defaults to `20` seconds)
