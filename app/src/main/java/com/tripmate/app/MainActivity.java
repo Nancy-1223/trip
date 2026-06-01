@@ -13,8 +13,10 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.view.Window;
+import android.webkit.ConsoleMessage;
 import android.webkit.GeolocationPermissions;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
+    private static final String LOG_TAG = "TripMateWebView";
     private static final String TRIPMATE_URL = "https://trip-y62q.onrender.com";
     private static final int REQUEST_APP_PERMISSIONS = 10;
     private static final int REQUEST_GEOLOCATION_PERMISSION = 11;
@@ -73,6 +76,16 @@ public class MainActivity extends Activity {
             }
         });
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                Log.d(
+                        LOG_TAG,
+                        consoleMessage.messageLevel() + ": " + consoleMessage.message()
+                                + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")"
+                );
+                return true;
+            }
+
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
                 if (hasLocationPermission()) {

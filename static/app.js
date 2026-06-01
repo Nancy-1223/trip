@@ -20,7 +20,8 @@ let selectedImageData = null;
 let isAuthenticated = false;
 let mapUserHasInteracted = false;
 let lastAutoFitRouteKey = null;
-let pendingSignupEmail = '';
+let pendingSignupEmail = sessionStorage.getItem('pendingSignupEmail') || '';
+let pendingSignupName = sessionStorage.getItem('pendingSignupName') || '';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
@@ -79,20 +80,38 @@ async function doRegister() {
     if (!fullName || !email || !password) { errEl.textContent = 'Full name, email and password are required'; errEl.classList.remove('hidden'); return; }
     try {
         const res = await fetch('/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ full_name: fullName, email, password }) });
-        const data = await res.json();
-        if (res.ok && data.success) {
+        const responseBody = await res.text();
+        console.log(`[TripMate] Signup response status=${res.status} body=${responseBody}`);
+        let data = {};
+        try {
+            data = responseBody ? JSON.parse(responseBody) : {};
+        } catch (parseError) {
+            console.warn(`[TripMate] Signup response JSON parse failed: ${parseError.message}`);
+        }
+        if ((res.status === 200 || res.status === 201) && data.success !== false) {
             pendingSignupEmail = email;
+            pendingSignupName = fullName;
+            sessionStorage.setItem('pendingSignupEmail', pendingSignupEmail);
+            sessionStorage.setItem('pendingSignupName', pendingSignupName);
+            errEl.textContent = '';
+            errEl.classList.add('hidden');
             document.getElementById('register-form').classList.add('hidden');
             document.getElementById('otp-form').classList.remove('hidden');
             document.getElementById('otp-input').value = '';
+            document.getElementById('otp-error').textContent = '';
             document.getElementById('otp-error').classList.add('hidden');
+            document.getElementById('otp-success').textContent = data.message || 'OTP sent to email';
             document.getElementById('otp-success').classList.add('hidden');
             document.getElementById('otp-input').focus();
         } else {
             errEl.textContent = data.error || 'Registration failed.';
             errEl.classList.remove('hidden');
         }
-    } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
+    } catch (error) {
+        console.error(`[TripMate] Signup network error: ${error.message}`);
+        errEl.textContent = 'Network error.';
+        errEl.classList.remove('hidden');
+    }
 }
 
 async function verifyOtp() {
@@ -113,6 +132,8 @@ async function verifyOtp() {
             successEl.textContent = 'Email verified successfully';
             successEl.classList.remove('hidden');
             document.getElementById('login-username').value = pendingSignupEmail;
+            sessionStorage.removeItem('pendingSignupEmail');
+            sessionStorage.removeItem('pendingSignupName');
             setTimeout(() => switchAuthTab('login'), 1200);
         } else {
             errEl.textContent = data.error || 'Invalid OTP';
