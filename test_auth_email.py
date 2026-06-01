@@ -12,8 +12,6 @@ class FakeSMTP:
     def __init__(self):
         self.login_args = None
         self.message = None
-        self.ehlo_count = 0
-        self.tls_enabled = False
 
     def __enter__(self):
         return self
@@ -23,12 +21,6 @@ class FakeSMTP:
 
     def login(self, email, app_password):
         self.login_args = (email, app_password)
-
-    def ehlo(self):
-        self.ehlo_count += 1
-
-    def starttls(self, context):
-        self.tls_enabled = context is not None
 
     def send_message(self, message):
         self.message = message
@@ -84,8 +76,20 @@ class AuthEmailTests(unittest.TestCase):
                 'password': 'secret-password',
             })
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 502)
         self.assertFalse(response.get_json()['success'])
+
+    def test_signup_converts_unexpected_email_exception_to_json_502(self):
+        with patch.object(backend, 'send_otp_email', side_effect=RuntimeError('smtp crashed')):
+            response = self.client.post('/signup', json={
+                'full_name': 'Nancy Nataz',
+                'email': 'new@example.com',
+                'password': 'secret-password',
+            })
+
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.get_json()['success'])
+        self.assertIn('RuntimeError', response.get_json()['delivery_error'])
 
     def test_login_and_profile_fall_back_to_capitalized_email_prefix(self):
         with sqlite3.connect(backend.DB_FILE) as conn:
@@ -125,7 +129,7 @@ class AuthEmailTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False):
             with patch.object(
                 backend.smtplib,
-                'SMTP',
+                'SMTP_SSL',
                 side_effect=[provider_error, smtp],
             ) as smtp_client:
                 delivery = backend.send_email('person@example.com', 'Subject', 'Body')
@@ -133,9 +137,8 @@ class AuthEmailTests(unittest.TestCase):
         self.assertTrue(delivery['success'])
         self.assertEqual(delivery['attempts'], 2)
         self.assertEqual(smtp_client.call_count, 2)
-        self.assertEqual(smtp_client.call_args.args[:2], ('smtp.gmail.com', 587))
-        self.assertEqual(smtp.ehlo_count, 2)
-        self.assertTrue(smtp.tls_enabled)
+        self.assertEqual(smtp_client.call_args.args[:2], ('smtp.gmail.com', 465))
+        self.assertEqual(smtp_client.call_args.kwargs['timeout'], 10)
         self.assertEqual(smtp.login_args, ('tripmate@gmail.com', 'app-password'))
         self.assertEqual(smtp.message['From'], 'tripmate@gmail.com')
         self.assertEqual(smtp.message['To'], 'person@example.com')

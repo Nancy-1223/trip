@@ -27,7 +27,8 @@ DB_FILE = 'database.db'
 # GMAIL_EMAIL, GMAIL_APP_PASSWORD, SMTP_TIMEOUT, SMTP_MAX_RETRIES
 OTP_EXPIRY_MINUTES = 5
 GMAIL_SMTP_HOST = 'smtp.gmail.com'
-GMAIL_SMTP_PORT = 587
+GMAIL_SMTP_PORT = 465
+MAX_SMTP_TIMEOUT_SECONDS = 10
 logger = logging.getLogger('tripmate')
 logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO').upper())
 
@@ -193,8 +194,8 @@ def get_email_config():
     return {
         'gmail_email': gmail_email,
         'app_password': app_password,
-        'timeout': get_int_env('SMTP_TIMEOUT', 20, minimum=1),
-        'max_retries': get_int_env('SMTP_MAX_RETRIES', 2, minimum=0),
+        'timeout': min(get_int_env('SMTP_TIMEOUT', 10, minimum=1), MAX_SMTP_TIMEOUT_SECONDS),
+        'max_retries': min(get_int_env('SMTP_MAX_RETRIES', 0, minimum=0), 1),
         'retry_delay': get_float_env('SMTP_RETRY_DELAY', 0.5, minimum=0),
         'errors': errors,
     }
@@ -237,14 +238,12 @@ def send_email(email, subject, text):
             attempts,
         )
         try:
-            with smtplib.SMTP(
+            with smtplib.SMTP_SSL(
                 GMAIL_SMTP_HOST,
                 GMAIL_SMTP_PORT,
                 timeout=config['timeout'],
+                context=ssl.create_default_context(),
             ) as smtp:
-                smtp.ehlo()
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.ehlo()
                 smtp.login(config['gmail_email'], config['app_password'])
                 refused_recipients = smtp.send_message(message)
             if refused_recipients:
@@ -275,7 +274,7 @@ def send_email(email, subject, text):
                 'attempts': attempt,
             }
         except smtplib.SMTPAuthenticationError as exc:
-            logger.error(
+            logger.exception(
                 'Email delivery authentication error provider=gmail_smtp recipient=%s code=%s error=%s',
                 email,
                 exc.smtp_code,
@@ -289,7 +288,7 @@ def send_email(email, subject, text):
                 'attempts': attempt,
             }
         except smtplib.SMTPRecipientsRefused as exc:
-            logger.error(
+            logger.exception(
                 'Email delivery error provider=gmail_smtp recipient=%s refused=%s',
                 email,
                 exc.recipients,
@@ -302,7 +301,7 @@ def send_email(email, subject, text):
                 'attempts': attempt,
             }
         except (smtplib.SMTPException, socket.timeout, OSError) as exc:
-            logger.error(
+            logger.exception(
                 'Email delivery error provider=gmail_smtp recipient=%s error=%s attempt=%s/%s',
                 email,
                 exc,
@@ -333,12 +332,22 @@ def send_otp_email(email, otp):
     logger.info('OTP generated recipient=%s expires_in_minutes=%s', email, OTP_EXPIRY_MINUTES)
     if os.environ.get('LOG_OTP_CODES', '').strip().lower() == 'true':
         logger.warning('Development OTP recipient=%s otp=%s', email, otp)
-    delivery = send_email(
-        email,
-        'TripMate Email Verification OTP',
-        f'Your TripMate verification OTP is: {otp}\n\n'
-        f'This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.',
-    )
+    try:
+        delivery = send_email(
+            email,
+            'TripMate Email Verification OTP',
+            f'Your TripMate verification OTP is: {otp}\n\n'
+            f'This OTP is valid for {OTP_EXPIRY_MINUTES} minutes.',
+        )
+    except Exception as exc:
+        logger.exception('Unexpected OTP email error recipient=%s', email)
+        delivery = {
+            'success': False,
+            'error': f'Unexpected OTP email error: {type(exc).__name__}',
+            'error_type': 'unexpected_error',
+            'provider_response': None,
+            'attempts': 0,
+        }
     if delivery['success']:
         logger.info('OTP email accepted by provider recipient=%s', email)
     else:
@@ -346,13 +355,12 @@ def send_otp_email(email, otp):
     return delivery
 
 def email_failure_response(delivery):
-    status = 503 if delivery['error_type'] == 'configuration_error' else 502
     return jsonify({
         'success': False,
         'email_sent': False,
         'error': 'OTP was generated, but the verification email could not be sent. Check the email configuration and try again.',
         'delivery_error': delivery['error'],
-    }), status
+    }), 502
 
 def get_display_name(display_name, email, username=''):
     if display_name and display_name.strip() and '@' not in display_name:
@@ -420,10 +428,18 @@ def signup():
     if response:
         return response, status
 
-    delivery = send_otp_email(email, otp)
+    try:
+        delivery = send_otp_email(email, otp)
+    except Exception as exc:
+        logger.exception('Signup OTP email delivery crashed recipient=%s', email)
+        delivery = {
+            'success': False,
+            'error': f'Unexpected OTP email error: {type(exc).__name__}',
+            'error_type': 'unexpected_error',
+        }
     if not delivery['success']:
         return email_failure_response(delivery)
-    return jsonify({'success': True, 'message': 'OTP sent to email', 'email_sent': True})
+    return jsonify({'success': True, 'message': 'OTP sent successfully'})
 
 @app.route('/verify-otp', methods=['POST'])
 def verify_otp():
@@ -491,7 +507,7 @@ def test_email():
         'TripMate email delivery test',
         'This is a TripMate email delivery test.',
     )
-    status = 200 if delivery['success'] else (503 if delivery['error_type'] == 'configuration_error' else 502)
+    status = 200 if delivery['success'] else 502
     return jsonify({
         'success': delivery['success'],
         'provider_response': delivery['provider_response'],
