@@ -23,6 +23,14 @@ let lastAutoFitRouteKey = null;
 let pendingSignupEmail = sessionStorage.getItem('pendingSignupEmail') || '';
 let pendingSignupName = sessionStorage.getItem('pendingSignupName') || '';
 
+function showAndroidLoginIfAvailable() {
+    if (window.TripMateAndroid && typeof window.TripMateAndroid.showLogin === 'function') {
+        window.TripMateAndroid.showLogin();
+        return true;
+    }
+    return false;
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
     try {
@@ -35,11 +43,11 @@ async function checkAuth() {
             loadTrips();
         } else {
             isAuthenticated = false;
-            showView('login-view');
+            if (!showAndroidLoginIfAvailable()) showView('login-view');
         }
     } catch {
         isAuthenticated = false;
-        showView('login-view');
+        if (!showAndroidLoginIfAvailable()) showView('login-view');
     }
 }
 
@@ -185,7 +193,7 @@ async function resendOtp() {
 async function doLogout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     isAuthenticated = false;
-    showView('login-view');
+    if (!showAndroidLoginIfAvailable()) showView('login-view');
 }
 
 // ─── View Navigation ──────────────────────────────────────────────────────────
@@ -226,7 +234,7 @@ function showToast(msg, duration = 2200) {
 async function loadTrips() {
     try {
         const res = await fetch('/api/trips');
-        if (res.status === 401) { showView('login-view'); return; }
+        if (res.status === 401) { if (!showAndroidLoginIfAvailable()) showView('login-view'); return; }
         allTrips = await res.json();
         renderTripsList();
     } catch { document.getElementById('trips-list').innerHTML = '<div class="empty-placeholder">Could not load trips.</div>'; }
@@ -1178,7 +1186,7 @@ async function openHistoryView() {
     // Always re-fetch fresh from server
     try {
         const res = await fetch('/api/trips');
-        if (res.status === 401) { showView('login-view'); return; }
+        if (res.status === 401) { if (!showAndroidLoginIfAvailable()) showView('login-view'); return; }
         allTrips = await res.json();
     } catch {
         list.innerHTML = '<div class="empty-placeholder">Error loading trips.</div>';

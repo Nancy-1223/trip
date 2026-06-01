@@ -17,6 +17,9 @@ import urllib.error
 import urllib.request
 import urllib.parse
 from werkzeug.security import generate_password_hash, check_password_hash
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static'))
@@ -53,10 +56,12 @@ def init_db():
         ('otp_code', 'TEXT'),
         ('otp_expires_at', 'TEXT'),
         ('is_verified', 'INTEGER DEFAULT 0'),
+        ('firebase_uid', 'TEXT'),
     ]
     for col, definition in migrations:
         if col not in existing_cols:
             c.execute(f'ALTER TABLE users ADD COLUMN {col} {definition}')
+    c.execute('CREATE UNIQUE INDEX IF NOT EXISTS users_firebase_uid_idx ON users(firebase_uid)')
     c.execute('''
         CREATE TABLE IF NOT EXISTS trips (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,15 +205,6 @@ def get_email_config():
         'retry_delay': get_float_env('SMTP_RETRY_DELAY', 0.5, minimum=0),
         'errors': errors,
     }
-
-def validate_email_config_at_startup():
-    config = get_email_config()
-    if config['errors']:
-        logger.error('Email delivery is not ready: %s', '; '.join(config['errors']))
-    else:
-        logger.info('Gmail SMTP configuration validation passed')
-
-validate_email_config_at_startup()
 
 def send_email(email, subject, text):
     config = get_email_config()
@@ -368,6 +364,18 @@ def get_display_name(display_name, email, username=''):
         return display_name.strip()
     fallback = (email or username or 'Traveler').split('@', 1)[0].strip()
     return fallback.capitalize() or 'Traveler'
+
+def get_firebase_app():
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        service_account_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', '').strip()
+        project_id = os.environ.get('FIREBASE_PROJECT_ID', '').strip()
+        options = {'projectId': project_id} if project_id else None
+        if service_account_json:
+            credential = firebase_credentials.Certificate(json.loads(service_account_json))
+            return firebase_admin.initialize_app(credential, options)
+        return firebase_admin.initialize_app(options=options)
 
 def create_pending_user(email, password, full_name):
     otp = f'{secrets.randbelow(1000000):06d}'
@@ -578,6 +586,62 @@ def login():
         'name': session['display_name'],
         'display_name': session['display_name'],
         'username': user['username'],
+    })
+
+@app.route('/api/auth/firebase-session', methods=['POST'])
+def firebase_session():
+    data = request.get_json(silent=True) or {}
+    id_token = (data.get('id_token') or '').strip()
+    if not id_token:
+        return jsonify({'success': False, 'error': 'Firebase ID token is required'}), 400
+
+    try:
+        decoded_token = firebase_auth.verify_id_token(id_token, app=get_firebase_app())
+        firebase_user = firebase_auth.get_user(decoded_token['uid'], app=get_firebase_app())
+    except Exception:
+        logger.exception('Firebase ID token verification failed')
+        return jsonify({'success': False, 'error': 'Invalid Firebase login'}), 401
+
+    email = (firebase_user.email or decoded_token.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'success': False, 'error': 'Firebase account email is required'}), 400
+    if not firebase_user.email_verified or not decoded_token.get('email_verified'):
+        return jsonify({'success': False, 'error': 'Please verify your email before login'}), 403
+
+    display_name = get_display_name(firebase_user.display_name, email)
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    user = c.execute(
+        'SELECT * FROM users WHERE firebase_uid=? OR email=? OR username=?',
+        (firebase_user.uid, email, email),
+    ).fetchone()
+    if user:
+        c.execute(
+            '''UPDATE users SET username=?, email=?, display_name=?, firebase_uid=?, is_verified=1,
+               otp_code=NULL, otp_expires_at=NULL WHERE id=?''',
+            (email, email, display_name, firebase_user.uid, user['id']),
+        )
+        user_id = user['id']
+    else:
+        c.execute(
+            '''INSERT INTO users (username, password, email, display_name, is_verified, firebase_uid)
+               VALUES (?, '', ?, ?, 1, ?)''',
+            (email, email, display_name, firebase_user.uid),
+        )
+        user_id = c.lastrowid
+    conn.commit()
+    conn.close()
+
+    session.clear()
+    session['user_id'] = user_id
+    session['username'] = email
+    session['display_name'] = display_name
+    return jsonify({
+        'success': True,
+        'name': display_name,
+        'display_name': display_name,
+        'username': email,
     })
 
 @app.route('/api/auth/logout', methods=['POST'])

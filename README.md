@@ -1,43 +1,44 @@
 TripMate
 ========
 
-Email OTP signup uses Gmail SMTP with a Google App Password.
+The Android app uses Firebase Authentication for email/password signup and login.
+Firebase sends the verification email. The TripMate dashboard opens only after the
+user verifies their email and signs in successfully.
 
-Google setup references: [App Passwords](https://support.google.com/accounts/answer/185833) and [Gmail SMTP configuration](https://support.google.com/a/answer/176600).
+Android flow:
 
-SMTP connection: `smtp.gmail.com` on port `465` with SSL enabled.
+`Create Account -> Firebase verification email -> Verify link -> Sign In -> Dashboard`
 
-- `GMAIL_EMAIL`
-- `GMAIL_APP_PASSWORD`
-- `SMTP_TIMEOUT` (optional, defaults to `10` seconds and is capped at `10`)
-- `SMTP_MAX_RETRIES` (optional, defaults to `0` and is capped at `1`)
-- `SMTP_RETRY_DELAY` (optional, defaults to `0.5` seconds)
-- `TEST_EMAIL_API_KEY` (required to call `POST /test-email`)
-- `LOG_OTP_CODES` (optional development-only setting; set to `true` to log OTP codes)
+Firebase setup
+--------------
 
-`POST /test-email` sends a diagnostic message to any requested address when the caller supplies the deployment secret:
+1. Create a Firebase project at [Firebase Console](https://console.firebase.google.com/).
+2. Open **Project settings** and add an Android app with package name `com.tripmate.app`.
+3. Download `google-services.json` and place it at `app/google-services.json`.
+4. Open **Authentication** > **Sign-in method** and enable **Email/Password**.
+5. In **Project settings** > **Service accounts**, generate a new private key.
+6. In the Render service dashboard, add `FIREBASE_PROJECT_ID` with the Firebase project ID.
+7. Add `FIREBASE_SERVICE_ACCOUNT_JSON` with the complete service-account JSON as a single-line value.
+8. Deploy the backend, then rebuild the Android app:
 
-```bash
-curl -X POST https://your-service.onrender.com/test-email \
-  -H "Content-Type: application/json" \
-  -H "X-Test-Email-Key: your-test-email-api-key" \
-  -d '{"email":"you@example.com"}'
+```powershell
+.\gradlew.bat assembleDebug
 ```
 
-Render deployment:
+The generated APK is at `app/build/outputs/apk/debug/app-debug.apk`.
 
-1. Enable 2-Step Verification for the Google account that will send TripMate OTP emails.
-2. In the Google account security settings, create an App Password for TripMate.
-3. In the TripMate Render service dashboard, open **Environment**.
-4. Add `GMAIL_EMAIL` with the complete Gmail address used to send OTP emails.
-5. Add `GMAIL_APP_PASSWORD` with the generated App Password. Do not use your normal Gmail password.
-6. Add `TEST_EMAIL_API_KEY` with a long random secret used only for the diagnostic endpoint.
-7. Optionally add `SMTP_TIMEOUT`, `SMTP_MAX_RETRIES`, and `SMTP_RETRY_DELAY` to override their defaults.
-8. Leave `LOG_OTP_CODES` unset or set it to `false` in production.
-9. Remove environment variables from the previous email provider configuration.
-10. Deploy the latest commit from Render.
-11. Open the Render logs and confirm `Gmail SMTP configuration validation passed`.
-12. Call `POST /test-email` with the curl command above and confirm the JSON response contains `"success": true`.
-13. Complete a normal signup and confirm that the OTP email arrives.
+How authentication works
+------------------------
 
-Passwords are stored as hashes. Signup OTPs expire after 5 minutes. Delivery failures are logged and returned as errors so they are visible during deployment checks.
+- Android creates the Firebase account with full name, email, and password.
+- Android stores the full name in the Firebase user profile.
+- Firebase sends the verification link.
+- Android blocks dashboard access until `emailVerified` is true.
+- After login, Android sends the Firebase ID token to `POST /api/auth/firebase-session`.
+- The Flask backend verifies the token with Firebase Admin and starts the existing
+  TripMate session so trips, notes, memories, expenses, maps, and other dashboard
+  features continue to work.
+- Existing local TripMate records are reused when the Firebase email matches an
+  existing account.
+
+Do not commit `app/google-services.json` or Firebase service-account private keys.
