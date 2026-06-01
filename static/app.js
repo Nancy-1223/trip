@@ -81,14 +81,19 @@ async function doRegister() {
     try {
         const res = await fetch('/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ full_name: fullName, email, password }) });
         const responseBody = await res.text();
-        console.log(`[TripMate] Signup response status=${res.status} body=${responseBody}`);
+        console.log(`[TripMate] Signup HTTP status=${res.status}`);
+        console.log(`[TripMate] Signup response body exactly as received: ${responseBody}`);
         let data = {};
         try {
             data = responseBody ? JSON.parse(responseBody) : {};
+            console.log(`[TripMate] Signup parsed JSON=${JSON.stringify(data)}`);
         } catch (parseError) {
             console.warn(`[TripMate] Signup response JSON parse failed: ${parseError.message}`);
         }
-        if ((res.status === 200 || res.status === 201) && data.success !== false) {
+        const otpSent = data.success === true
+            || data.email_sent === true
+            || /otp\s+sent/i.test(data.message || '');
+        if (otpSent) {
             pendingSignupEmail = email;
             pendingSignupName = fullName;
             sessionStorage.setItem('pendingSignupEmail', pendingSignupEmail);
@@ -104,7 +109,7 @@ async function doRegister() {
             document.getElementById('otp-success').classList.add('hidden');
             document.getElementById('otp-input').focus();
         } else {
-            errEl.textContent = data.error || 'Registration failed.';
+            errEl.textContent = data.error || data.message || `Registration failed. HTTP ${res.status}`;
             errEl.classList.remove('hidden');
         }
     } catch (error) {
