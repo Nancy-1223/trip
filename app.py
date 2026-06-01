@@ -9,6 +9,7 @@ import smtplib
 import socket
 import ssl
 import time
+import traceback
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from functools import wraps
@@ -373,26 +374,38 @@ def create_pending_user(email, password, full_name):
     expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat()
     password_hash = generate_password_hash(password)
 
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    existing = c.execute('SELECT id, is_verified FROM users WHERE email=? OR username=?', (email, email)).fetchone()
-    if existing and existing['is_verified']:
-        conn.close()
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        existing = c.execute('SELECT id, is_verified FROM users WHERE email=? OR username=?', (email, email)).fetchone()
+        if existing and existing['is_verified']:
+            return None, jsonify({'success': False, 'error': 'Email already registered'}), 409
+        if existing:
+            logger.info('Updating pending signup user recipient=%s user_id=%s', email, existing['id'])
+            c.execute('''UPDATE users SET username=?, password=?, email=?, password_hash=?, otp_code=?,
+                         otp_expires_at=?, is_verified=0, display_name=?
+                         WHERE id=?''',
+                      (email, '', email, password_hash, otp, expires_at, full_name, existing['id']))
+        else:
+            logger.info('Inserting pending signup user recipient=%s', email)
+            c.execute('''INSERT INTO users (username, password, email, password_hash, display_name,
+                         otp_code, otp_expires_at, is_verified)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 0)''',
+                      (email, '', email, password_hash, full_name, otp, expires_at))
+        conn.commit()
+        logger.info('Pending signup committed recipient=%s otp_expires_at=%s', email, expires_at)
+        return otp, None, None
+    except sqlite3.IntegrityError:
+        logger.error('Signup database integrity error recipient=%s\n%s', email, traceback.format_exc())
         return None, jsonify({'success': False, 'error': 'Email already registered'}), 409
-    if existing:
-        c.execute('''UPDATE users SET username=?, password=?, email=?, password_hash=?, otp_code=?,
-                     otp_expires_at=?, is_verified=0, display_name=?
-                     WHERE id=?''',
-                  (email, '', email, password_hash, otp, expires_at, full_name, existing['id']))
-    else:
-        c.execute('''INSERT INTO users (username, password, email, password_hash, display_name,
-                     otp_code, otp_expires_at, is_verified)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, 0)''',
-                  (email, '', email, password_hash, full_name, otp, expires_at))
-    conn.commit()
-    conn.close()
-    return otp, None, None
+    except sqlite3.Error:
+        logger.error('Signup SQLite error recipient=%s\n%s', email, traceback.format_exc())
+        return None, jsonify({'success': False, 'error': 'Could not store signup details'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
 
 def issue_new_otp(email):
     otp = f'{secrets.randbelow(1000000):06d}'
@@ -417,29 +430,52 @@ def issue_new_otp(email):
 @app.route('/signup', methods=['POST'])
 @app.route('/api/auth/register', methods=['POST'])
 def signup():
-    data = request.get_json(silent=True) or {}
-    email = (data.get('email') or data.get('username') or '').strip().lower()
-    password = data.get('password') or ''
-    full_name = (data.get('full_name') or data.get('name') or '').strip()
-    if not full_name or not email or not password:
-        return jsonify({'success': False, 'error': 'Full name, email and password are required'}), 400
-
-    otp, response, status = create_pending_user(email, password, full_name)
-    if response:
-        return response, status
-
+    email = '<unknown>'
+    otp_email_sent = False
     try:
-        delivery = send_otp_email(email, otp)
-    except Exception as exc:
-        logger.exception('Signup OTP email delivery crashed recipient=%s', email)
-        delivery = {
+        data = request.get_json(silent=True) or {}
+        email = (data.get('email') or data.get('username') or '').strip().lower()
+        password = data.get('password') or ''
+        full_name = (data.get('full_name') or data.get('name') or '').strip()
+        if not full_name or not email or not password:
+            return jsonify({'success': False, 'error': 'Full name, email and password are required'}), 400
+
+        logger.info('Signup started recipient=%s', email)
+        otp, response, status = create_pending_user(email, password, full_name)
+        if response:
+            logger.warning('Signup database step returned error recipient=%s status=%s', email, status)
+            return response, status
+
+        try:
+            delivery = send_otp_email(email, otp)
+        except Exception:
+            logger.error('Signup OTP email call crashed recipient=%s\n%s', email, traceback.format_exc())
+            return email_failure_response({
+                'error': 'Unexpected OTP email error',
+            })
+        if not isinstance(delivery, dict) or 'success' not in delivery:
+            logger.error('Signup OTP delivery returned invalid result recipient=%s result=%r', email, delivery)
+            return jsonify({
+                'success': False,
+                'error': 'OTP delivery returned an invalid response',
+            }), 502
+        logger.info('Signup OTP delivery result recipient=%s success=%s', email, delivery['success'])
+        if not delivery['success']:
+            return email_failure_response(delivery)
+
+        otp_email_sent = True
+        success_payload = {'success': True, 'message': 'OTP sent successfully'}
+        logger.info('Signup completed recipient=%s response=%s', email, success_payload)
+        return jsonify(success_payload)
+    except Exception:
+        logger.error('Signup crashed recipient=%s\n%s', email, traceback.format_exc())
+        if otp_email_sent:
+            logger.warning('Signup recovered after confirmed OTP delivery recipient=%s', email)
+            return jsonify({'success': True, 'message': 'OTP sent successfully'})
+        return jsonify({
             'success': False,
-            'error': f'Unexpected OTP email error: {type(exc).__name__}',
-            'error_type': 'unexpected_error',
-        }
-    if not delivery['success']:
-        return email_failure_response(delivery)
-    return jsonify({'success': True, 'message': 'OTP sent successfully'})
+            'error': 'Signup failed unexpectedly',
+        }), 500
 
 @app.route('/verify-otp', methods=['POST'])
 def verify_otp():

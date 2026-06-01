@@ -91,6 +91,48 @@ class AuthEmailTests(unittest.TestCase):
         self.assertFalse(response.get_json()['success'])
         self.assertIn('RuntimeError', response.get_json()['delivery_error'])
 
+    def test_signup_converts_invalid_delivery_result_to_json_502(self):
+        with patch.object(backend, 'send_otp_email', return_value=None):
+            response = self.client.post('/signup', json={
+                'full_name': 'Nancy Nataz',
+                'email': 'new@example.com',
+                'password': 'secret-password',
+            })
+
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_signup_recovers_if_exception_occurs_after_confirmed_delivery(self):
+        delivery = {'success': True, 'provider_response': {'provider': 'gmail_smtp'}, 'attempts': 1}
+        original_info = backend.logger.info
+
+        def raise_after_delivery(message, *args):
+            if message.startswith('Signup completed'):
+                raise RuntimeError('post-delivery logging failed')
+            return original_info(message, *args)
+
+        with patch.object(backend, 'send_otp_email', return_value=delivery):
+            with patch.object(backend.logger, 'info', side_effect=raise_after_delivery):
+                response = self.client.post('/signup', json={
+                    'full_name': 'Nancy Nataz',
+                    'email': 'new@example.com',
+                    'password': 'secret-password',
+                })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {'success': True, 'message': 'OTP sent successfully'})
+
+    def test_signup_returns_json_for_sqlite_error(self):
+        with patch.object(backend.sqlite3, 'connect', side_effect=sqlite3.OperationalError('database unavailable')):
+            response = self.client.post('/signup', json={
+                'full_name': 'Nancy Nataz',
+                'email': 'new@example.com',
+                'password': 'secret-password',
+            })
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()['error'], 'Could not store signup details')
+
     def test_login_and_profile_fall_back_to_capitalized_email_prefix(self):
         with sqlite3.connect(backend.DB_FILE) as conn:
             conn.execute(
