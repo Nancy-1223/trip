@@ -1,5 +1,13 @@
 // ═══════════════════════════════════════════ INIT
 lucide.createIcons();
+window.addEventListener('error', event => {
+    console.error('[TripMate] Runtime error:', event.message, event.error);
+    showToast('Something went wrong. Please try again.');
+});
+window.addEventListener('unhandledrejection', event => {
+    console.error('[TripMate] Unhandled promise rejection:', event.reason);
+    showToast('Something went wrong. Please try again.');
+});
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let map, mapMarker, mapPolyline, routePolyline, routeDestinationMarker;
@@ -31,27 +39,67 @@ function showAndroidLoginIfAvailable() {
     return false;
 }
 
+function canUseAndroidFirebaseFallback() {
+    try {
+        return Boolean(window.TripMateAndroid
+            && typeof window.TripMateAndroid.isFirebaseAuthenticated === 'function'
+            && window.TripMateAndroid.isFirebaseAuthenticated());
+    } catch (err) {
+        console.warn('[TripMate] Android Firebase fallback check failed:', err);
+        return false;
+    }
+}
+
+function openDashboardFromAndroidFirebaseFallback() {
+    let displayName = 'Traveler';
+    try {
+        if (window.TripMateAndroid && typeof window.TripMateAndroid.getFirebaseDisplayName === 'function') {
+            displayName = window.TripMateAndroid.getFirebaseDisplayName() || displayName;
+        }
+    } catch (err) {
+        console.warn('[TripMate] Android Firebase display name fallback failed:', err);
+    }
+    console.log('[TripMate] Opening dashboard using Android Firebase fallback');
+    isAuthenticated = true;
+    document.getElementById('greeting-name').textContent = `Hi, ${displayName}!`;
+    showView('dashboard-view');
+    loadTrips();
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function checkAuth() {
+    console.log('[TripMate] Checking auth session');
     try {
         const res = await fetch('/api/auth/me');
         const data = await res.json();
         if (data.logged_in) {
+            console.log('[TripMate] Backend auth session active');
             isAuthenticated = true;
             document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
             showView('dashboard-view');
             loadTrips();
         } else {
+            console.warn('[TripMate] Backend auth session inactive');
             isAuthenticated = false;
+            if (canUseAndroidFirebaseFallback()) {
+                openDashboardFromAndroidFirebaseFallback();
+                return;
+            }
             if (!showAndroidLoginIfAvailable()) showView('login-view');
         }
-    } catch {
+    } catch (err) {
+        console.error('[TripMate] Auth check failed:', err);
         isAuthenticated = false;
+        if (canUseAndroidFirebaseFallback()) {
+            openDashboardFromAndroidFirebaseFallback();
+            return;
+        }
         if (!showAndroidLoginIfAvailable()) showView('login-view');
     }
 }
 
 function switchAuthTab(tab) {
+    console.log(`[TripMate] Auth tab switched: ${tab}`);
     document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', (i === 0) === (tab === 'login')));
     document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
     document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
@@ -64,19 +112,26 @@ async function doLogin() {
     const errEl = document.getElementById('login-error');
     errEl.classList.add('hidden');
     if (!username || !password) { errEl.textContent = 'Email and password are required'; errEl.classList.remove('hidden'); return; }
+    console.log('[TripMate] Web login request started');
     try {
         const res = await fetch('/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: username, password }) });
         const data = await res.json();
         if (res.ok && data.success) {
+            console.log('[TripMate] Web login success');
             isAuthenticated = true;
             document.getElementById('greeting-name').textContent = `Hi, ${data.display_name}! 👋`;
             showView('dashboard-view');
             loadTrips();
         } else {
+            console.warn('[TripMate] Web login error:', data.error || res.status);
             errEl.textContent = data.error || 'Invalid email or password';
             errEl.classList.remove('hidden');
         }
-    } catch { errEl.textContent = 'Network error.'; errEl.classList.remove('hidden'); }
+    } catch (err) {
+        console.error('[TripMate] Web login network error:', err);
+        errEl.textContent = 'Network error.';
+        errEl.classList.remove('hidden');
+    }
 }
 
 async function doRegister() {
@@ -234,10 +289,21 @@ function showToast(msg, duration = 2200) {
 async function loadTrips() {
     try {
         const res = await fetch('/api/trips');
-        if (res.status === 401) { if (!showAndroidLoginIfAvailable()) showView('login-view'); return; }
+        if (res.status === 401) {
+            if (canUseAndroidFirebaseFallback()) {
+                allTrips = [];
+                renderTripsList();
+                return;
+            }
+            if (!showAndroidLoginIfAvailable()) showView('login-view');
+            return;
+        }
         allTrips = await res.json();
         renderTripsList();
-    } catch { document.getElementById('trips-list').innerHTML = '<div class="empty-placeholder">Could not load trips.</div>'; }
+    } catch (err) {
+        console.error('[TripMate] Trips load failed:', err);
+        document.getElementById('trips-list').innerHTML = '<div class="empty-placeholder">Could not load trips.</div>';
+    }
 }
 
 function renderTripsList() {
@@ -277,6 +343,7 @@ function hideSetupModal() {
 }
 
 function detectLocation() {
+    console.log('[TripMate] Detect location requested');
     const input = document.getElementById('start-point-input');
     const iconWrap = document.getElementById('start-icon-wrap');
     const detectWrap = document.getElementById('detect-icon-wrap');
@@ -430,6 +497,7 @@ async function startTrip() {
     const dest = document.getElementById('destination-input').value.trim();
     const start = document.getElementById('start-point-input').value.trim();
     if (!dest) { showToast('Enter a destination'); return; }
+    console.log('[TripMate] Start trip requested destination:', dest);
 
     hideSetupModal();
     showView('map-view');
@@ -456,12 +524,13 @@ async function startTrip() {
         });
         const data = await res.json();
         currentTripId = data.trip_id;
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error('[TripMate] Trip save failed:', err); }
 }
 
 // ─── Map ──────────────────────────────────────────────────────────────────────
 function initMap() {
     if (map) { setTimeout(() => map.invalidateSize(), 150); return; }
+    console.log('[TripMate] Initializing map');
     map = L.map('map', { zoomControl: false }).setView(FALLBACK_LATLNG, 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
     mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
@@ -486,7 +555,8 @@ function updateCurrentLocationMarker(latLng, shouldCenter = true) {
     if (!mapMarker) mapMarker = L.marker(latLng);
     mapMarker.setLatLng(latLng);
     if (!map.hasLayer(mapMarker)) mapMarker.addTo(map);
-    if (shouldCenter && !mapUserHasInteracted) map.setView(latLng, 16);
+    const hasRoute = Boolean(routePolyline?.getLatLngs?.().length);
+    if (shouldCenter && !mapUserHasInteracted && !hasRoute) map.setView(latLng, 16);
 }
 
 async function updateDetectedLocationInput(latLng) {
@@ -518,6 +588,7 @@ function applyLiveLocation(lat, lng, shouldCenter = true) {
     currentLng = latLng[1];
     gpsLocationReady = true;
     userCurrentLatLng = latLng;
+    console.log('[TripMate] Live location applied:', currentLat, currentLng);
 
     updateCurrentLocationMarker(latLng, shouldCenter);
     updateDetectedLocationInput(latLng);
@@ -554,6 +625,7 @@ function handleGpsFailure() {
 
 function startLiveLocationWatch(destinationName = activeDestinationName) {
     if (destinationName) activeDestinationName = destinationName;
+    console.log('[TripMate] Starting live location watch destination:', activeDestinationName || '(none)');
 
     if (!navigator.geolocation) {
         handleGpsFailure();
@@ -889,6 +961,7 @@ function addTouristSpotMarkers(spots, destination = '', autoFit = true) {
 
 async function addTouristSpotMarkersForDestination(destination) {
     if (!destination) return 0;
+    console.log('[TripMate] Loading tourist spots for destination:', destination);
     try {
         const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(destination)}`);
         const spots = await res.json();
@@ -898,7 +971,8 @@ async function addTouristSpotMarkersForDestination(destination) {
             return 0;
         }
         return addTouristSpotMarkers(spots, destination, false);
-    } catch {
+    } catch (err) {
+        console.error('[TripMate] Tourist spot load failed:', err);
         showToast('Could not load tourist spots for this destination.');
         return 0;
     }
@@ -1086,6 +1160,11 @@ async function loadMemories() {
     grid.innerHTML = '<div class="empty-placeholder">Loading memories...</div>';
     try {
         const res = await fetch('/api/memories');
+        if (res.status === 401 && canUseAndroidFirebaseFallback()) {
+            grid.innerHTML = '<div class="empty-placeholder">Photos need the TripMate backend session. Please sign in again if this stays empty.</div>';
+            return;
+        }
+        if (!res.ok) throw new Error(`Memories request failed: ${res.status}`);
         const mems = await res.json();
         if (!mems.length) { grid.innerHTML = '<div class="empty-placeholder">No memories yet. Upload your first photo!</div>'; return; }
         grid.innerHTML = mems.map(m => `
@@ -1100,7 +1179,10 @@ async function loadMemories() {
         lucide.createIcons();
         // Load images
         mems.forEach(m => loadMemoryThumbnail(m.id));
-    } catch { grid.innerHTML = '<div class="empty-placeholder">Error loading memories.</div>'; }
+    } catch (err) {
+        console.error('[TripMate] Error loading memories:', err);
+        grid.innerHTML = '<div class="empty-placeholder">Error loading memories.</div>';
+    }
 }
 
 async function loadMemoryThumbnail(memId) {
@@ -1143,22 +1225,32 @@ async function saveMemory() {
     const trip_id = document.getElementById('img-trip-select').value || null;
     const filename = document.getElementById('img-file-input').files[0]?.name || 'photo.jpg';
     try {
-        await fetch('/api/memories', {
+        const res = await fetch('/api/memories', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({ image_data: selectedImageData, caption, trip_id, filename })
         });
+        if (!res.ok) throw new Error(`Save memory failed: ${res.status}`);
         closeImageUpload();
         showToast('Memory saved! 📸');
         loadMemories();
-    } catch { showToast('Error saving memory.'); }
+    } catch (err) {
+        console.error('[TripMate] Error saving memory:', err);
+        showToast('Error saving memory.');
+    }
 }
 
 async function deleteMemory(memId) {
     if (!confirm('Delete this memory?')) return;
-    await fetch(`/api/memories/${memId}`, { method: 'DELETE' });
-    showToast('Memory deleted');
-    loadMemories();
+    try {
+        const res = await fetch(`/api/memories/${memId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete memory failed: ${res.status}`);
+        showToast('Memory deleted');
+        loadMemories();
+    } catch (err) {
+        console.error('[TripMate] Error deleting memory:', err);
+        showToast('Error deleting memory.');
+    }
 }
 
 async function openLightbox(memId, caption) {
@@ -1566,7 +1658,9 @@ async function searchTouristSpots() {
     list.innerHTML = '';
 
     try {
+        console.log('[TripMate] Tourist spot search requested:', dest);
         const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(dest)}`);
+        if (!res.ok) throw new Error(`Tourist spot request failed: ${res.status}`);
         const spots = await res.json();
         loading.classList.add('hidden');
 
@@ -1603,7 +1697,8 @@ async function searchTouristSpots() {
             </div>
         `).join('');
         lucide.createIcons();
-    } catch {
+    } catch (err) {
+        console.error('[TripMate] Tourist spot search failed:', err);
         loading.classList.add('hidden');
         list.innerHTML = '<div class="empty-placeholder">Error fetching spots. Try again!</div>';
     }

@@ -25,6 +25,8 @@ import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebChromeClient.FileChooserParams;
@@ -92,19 +94,31 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        configureWindow();
-        pendingWebViewState = savedInstanceState;
+        try {
+            Log.i(LOG_TAG, "App launch started");
+            configureWindow();
+            showLoadingScreen("Starting TripMate...");
+            pendingWebViewState = savedInstanceState;
 
-        if (FirebaseApp.initializeApp(this) == null) {
-            showSetupError();
-            return;
-        }
-        firebaseAuth = FirebaseAuth.getInstance();
-        FirebaseUser currentUser = firebaseAuth.getCurrentUser();
-        if (currentUser == null) {
-            showAuthScreen(false, "");
-        } else {
-            checkVerifiedAndOpen(currentUser, null);
+            if (FirebaseApp.initializeApp(this) == null) {
+                Log.e(LOG_TAG, "Firebase config missing or invalid");
+                showSetupError();
+                return;
+            }
+            Log.i(LOG_TAG, "Firebase config loaded");
+            firebaseAuth = FirebaseAuth.getInstance();
+            FirebaseUser currentUser = firebaseAuth.getCurrentUser();
+            if (currentUser == null) {
+                Log.i(LOG_TAG, "No existing Firebase user. Showing auth screen.");
+                showAuthScreen(false, "");
+            } else {
+                Log.i(LOG_TAG, "Existing Firebase user found uid=" + currentUser.getUid()
+                        + " email=" + currentUser.getEmail());
+                checkVerifiedAndOpen(currentUser, null);
+            }
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "App launch failed", exception);
+            showAuthScreen(false, getErrorMessage(exception, "TripMate could not start. Please try again."));
         }
     }
 
@@ -124,6 +138,18 @@ public class MainActivity extends Activity {
         message.setPadding(48, 80, 48, 48);
         message.setTextSize(18);
         message.setText("Firebase is not configured. Add app/google-services.json and rebuild TripMate.");
+        setContentView(message);
+    }
+
+    private void showLoadingScreen(String messageText) {
+        TextView message = new TextView(this);
+        message.setGravity(Gravity.CENTER);
+        message.setPadding(dp(32), dp(32), dp(32), dp(32));
+        message.setText(messageText);
+        message.setTextColor(COLOR_TEXT);
+        message.setTextSize(16);
+        message.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        message.setBackgroundColor(COLOR_BG);
         setContentView(message);
     }
 
@@ -522,6 +548,9 @@ public class MainActivity extends Activity {
 
     private void checkVerifiedAndOpen(FirebaseUser user, TextView status) {
         Log.i(LOG_TAG, "Reloading Firebase user uid=" + user.getUid() + " email=" + user.getEmail());
+        if (status == null) {
+            showLoadingScreen("Checking your TripMate session...");
+        }
         user.reload().addOnCompleteListener(task -> {
             FirebaseUser refreshedUser = firebaseAuth.getCurrentUser();
             if (!task.isSuccessful() || refreshedUser == null) {
@@ -538,7 +567,7 @@ public class MainActivity extends Activity {
             Log.i(LOG_TAG, "Firebase emailVerified value=" + refreshedUser.isEmailVerified()
                     + " uid=" + refreshedUser.getUid());
             if (status != null) {
-                status.setText(verificationStatus);
+                showAuthStatus(status, verificationStatus, COLOR_BLUE);
             }
             if (!refreshedUser.isEmailVerified()) {
                 refreshedUser.sendEmailVerification();
@@ -552,6 +581,8 @@ public class MainActivity extends Activity {
     }
 
     private void exchangeFirebaseToken(FirebaseUser user) {
+        Log.i(LOG_TAG, "Firebase token exchange started uid=" + user.getUid());
+        showLoadingScreen("Opening TripMate...");
         user.getIdToken(true).addOnCompleteListener(task -> {
             if (!task.isSuccessful() || task.getResult() == null) {
                 Exception exception = task.getException();
@@ -649,8 +680,14 @@ public class MainActivity extends Activity {
             setContentView(webView);
             return;
         }
-        webView = new WebView(this);
-        webView.addJavascriptInterface(new AndroidAuthBridge(), "TripMateAndroid");
+        try {
+            webView = new WebView(this);
+            webView.addJavascriptInterface(new AndroidAuthBridge(), "TripMateAndroid");
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "WebView creation failed", exception);
+            showAuthScreen(false, getErrorMessage(exception, "Could not open TripMate."));
+            return;
+        }
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
@@ -663,7 +700,17 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                Log.i(LOG_TAG, "WebView page finished url=" + url);
                 sendLocationToWebView(lastNativeLocation);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && request != null && request.isForMainFrame()) {
+                    Log.e(LOG_TAG, "WebView main-frame error code=" + error.getErrorCode()
+                            + " description=" + error.getDescription());
+                }
             }
         });
         webView.setWebChromeClient(new WebChromeClient() {
@@ -675,15 +722,21 @@ public class MainActivity extends Activity {
 
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                Log.i(LOG_TAG, "WebView geolocation prompt origin=" + origin);
                 if (hasLocationPermission()) {
                     callback.invoke(origin, true, false);
                 } else {
                     geolocationOrigin = origin;
                     geolocationCallback = callback;
-                    requestPermissions(new String[] {
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                    }, REQUEST_GEOLOCATION_PERMISSION);
+                    try {
+                        requestPermissions(new String[] {
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                        }, REQUEST_GEOLOCATION_PERMISSION);
+                    } catch (Exception exception) {
+                        Log.e(LOG_TAG, "Geolocation permission request failed", exception);
+                        callback.invoke(origin, false, false);
+                    }
                 }
             }
 
@@ -730,12 +783,38 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showLogin() {
             runOnUiThread(() -> {
+                Log.i(LOG_TAG, "Web requested Android login");
                 firebaseAuth.signOut();
                 CookieManager.getInstance().removeAllCookies(null);
                 webView = null;
                 webViewLoaded = false;
                 showAuthScreen(false, "");
             });
+        }
+
+        @JavascriptInterface
+        public boolean isFirebaseAuthenticated() {
+            FirebaseUser user = firebaseAuth == null ? null : firebaseAuth.getCurrentUser();
+            boolean authenticated = user != null && user.isEmailVerified();
+            Log.i(LOG_TAG, "Web checked Firebase auth fallback authenticated=" + authenticated);
+            return authenticated;
+        }
+
+        @JavascriptInterface
+        public String getFirebaseDisplayName() {
+            FirebaseUser user = firebaseAuth == null ? null : firebaseAuth.getCurrentUser();
+            if (user == null) {
+                return "Traveler";
+            }
+            String displayName = user.getDisplayName();
+            if (displayName != null && !displayName.trim().isEmpty()) {
+                return displayName.trim();
+            }
+            String email = user.getEmail();
+            if (email != null && email.contains("@")) {
+                return email.substring(0, email.indexOf('@'));
+            }
+            return "Traveler";
         }
     }
 
@@ -783,7 +862,13 @@ public class MainActivity extends Activity {
         if (permissions.isEmpty()) {
             return false;
         }
-        requestPermissions(permissions.toArray(new String[0]), REQUEST_APP_PERMISSIONS);
+        Log.i(LOG_TAG, "Requesting initial permissions count=" + permissions.size());
+        try {
+            requestPermissions(permissions.toArray(new String[0]), REQUEST_APP_PERMISSIONS);
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "Initial permission request failed", exception);
+            return false;
+        }
         return true;
     }
 
@@ -793,6 +878,7 @@ public class MainActivity extends Activity {
         }
         webViewLoaded = true;
         if (pendingWebViewState == null || webView.restoreState(pendingWebViewState) == null) {
+            Log.i(LOG_TAG, "Loading TripMate URL " + TRIPMATE_URL);
             webView.loadUrl(TRIPMATE_URL);
         }
     }
@@ -800,22 +886,29 @@ public class MainActivity extends Activity {
     @SuppressLint("MissingPermission")
     private void startNativeLocationUpdates() {
         if (locationManager == null || locationListener == null || !hasLocationPermission()) {
+            Log.i(LOG_TAG, "Native location updates skipped permission=" + hasLocationPermission());
             return;
         }
-        Location lastKnown = null;
-        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 3f, locationListener);
-            lastKnown = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-        }
-        if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 3f, locationListener);
-            Location networkLastKnown = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-            if (lastKnown == null || (networkLastKnown != null && networkLastKnown.getTime() > lastKnown.getTime())) {
-                lastKnown = networkLastKnown;
+        try {
+            Location lastKnown = null;
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 3f, locationListener);
+                lastKnown = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             }
-        }
-        if (lastKnown != null) {
-            sendLocationToWebView(lastKnown);
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 3f, locationListener);
+                Location networkLastKnown = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (lastKnown == null || (networkLastKnown != null && networkLastKnown.getTime() > lastKnown.getTime())) {
+                    lastKnown = networkLastKnown;
+                }
+            }
+            if (lastKnown != null) {
+                Log.i(LOG_TAG, "Native last known location lat=" + lastKnown.getLatitude()
+                        + " lng=" + lastKnown.getLongitude());
+                sendLocationToWebView(lastKnown);
+            }
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "Native location updates failed", exception);
         }
     }
 
@@ -824,9 +917,16 @@ public class MainActivity extends Activity {
             return;
         }
         lastNativeLocation = location;
-        runOnUiThread(() -> webView.evaluateJavascript(
-                "if (window.updateNativeLocation) { window.updateNativeLocation("
-                        + location.getLatitude() + "," + location.getLongitude() + "); }", null));
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            try {
+                webView.evaluateJavascript(
+                        "if (window.updateNativeLocation) { window.updateNativeLocation("
+                                + location.getLatitude() + "," + location.getLongitude() + "); }", null);
+            } catch (Exception exception) {
+                Log.e(LOG_TAG, "Sending native location to WebView failed", exception);
+            }
+        });
     }
 
     private boolean hasLocationPermission() {
@@ -838,6 +938,8 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        Log.i(LOG_TAG, "Permission result requestCode=" + requestCode
+                + " hasLocationPermission=" + hasLocationPermission());
         if ((requestCode == REQUEST_GEOLOCATION_PERMISSION || requestCode == REQUEST_APP_PERMISSIONS)
                 && geolocationCallback != null) {
             geolocationCallback.invoke(geolocationOrigin, hasLocationPermission(), false);

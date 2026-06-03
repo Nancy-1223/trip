@@ -820,6 +820,19 @@ def get_memory_image(mem_id):
         return jsonify({'error': 'Not found'}), 404
     return jsonify({'image_data': row['image_data']})
 
+@app.route('/api/memories/<int:mem_id>', methods=['DELETE'])
+@login_required
+def delete_memory(mem_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('DELETE FROM memories WHERE id=? AND user_id=?', (mem_id, session['user_id']))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    if not deleted:
+        return jsonify({'success': False, 'error': 'Memory not found'}), 404
+    return jsonify({'success': True})
+
 def fetch_overpass_places(location=None, lat=None, lng=None, types=None):
     if types is None:
         types = ['tourism="attraction"', 'historic="landmark"', 'tourism="museum"']
