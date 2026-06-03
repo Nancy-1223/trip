@@ -212,7 +212,10 @@ public class MainActivity extends Activity {
         card.addView(tabs, tabsParams);
 
         Button signInTab = createTabButton("Sign In", !createAccount);
-        signInTab.setOnClickListener(view -> showAuthScreen(false, ""));
+        signInTab.setOnClickListener(view -> {
+            Log.i(LOG_TAG, "Sign In tab clicked");
+            showAuthScreen(false, "");
+        });
         tabs.addView(signInTab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1));
 
         Button createTab = createTabButton("Create Account", createAccount);
@@ -247,7 +250,7 @@ public class MainActivity extends Activity {
 
         Button submit = new Button(this);
         submit.setAllCaps(false);
-        submit.setText(createAccount ? "Create Account  ->" : "Sign In  ->");
+        submit.setText(createAccount ? "Create Account  ->" : "Sign In");
         submit.setTextColor(Color.WHITE);
         submit.setTextSize(16);
         submit.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -264,6 +267,8 @@ public class MainActivity extends Activity {
                         + " passwordProvided=" + !passwordValue.isEmpty());
                 createAccount(finalFullName.getText().toString().trim(), emailValue, passwordValue, status, submit);
             } else {
+                Log.i(LOG_TAG, "Login button clicked email=" + emailValue
+                        + " passwordProvided=" + !passwordValue.isEmpty());
                 signIn(emailValue, passwordValue, status, submit);
             }
         });
@@ -456,20 +461,29 @@ public class MainActivity extends Activity {
 
     private void signIn(String email, String password, TextView status, Button submit) {
         if (email.isEmpty() || password.isEmpty()) {
-            status.setText("Email and password are required.");
+            showAuthStatus(status, "Email and password are required.", COLOR_RED);
             return;
         }
-        Log.i(LOG_TAG, "Firebase sign-in requested email=" + email
+        if (!Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            showAuthStatus(status, "Enter a valid email address.", COLOR_RED);
+            return;
+        }
+        Log.i(LOG_TAG, "Login request started email=" + email
                 + " passwordProvided=" + !password.isEmpty()
                 + " passwordLength=" + password.length());
         submit.setEnabled(false);
-        status.setText("Signing in...");
+        submit.setText("Signing in...");
+        showAuthStatus(status, "Signing in...", COLOR_BLUE);
         firebaseAuth.signInWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
             if (!task.isSuccessful() || firebaseAuth.getCurrentUser() == null) {
                 submit.setEnabled(true);
+                submit.setText("Sign In");
                 Exception exception = task.getException();
                 logAuthFailure("Firebase signInWithEmailAndPassword failed email=" + email, exception);
-                status.setText(getErrorMessage(exception, "Could not sign in."));
+                Log.e(LOG_TAG, "Login error email=" + email
+                        + " message=" + getErrorMessage(exception, "Could not sign in."), exception);
+                showAuthStatus(status, getErrorMessage(exception,
+                        "Email or password is incorrect. Please try again."), COLOR_RED);
                 return;
             }
             FirebaseUser currentUser = firebaseAuth.getCurrentUser();
@@ -477,7 +491,9 @@ public class MainActivity extends Activity {
                     + currentUser.getUid() + " email=" + currentUser.getEmail());
             Log.i(LOG_TAG, "Firebase login success uid=" + currentUser.getUid()
                     + " email=" + currentUser.getEmail());
-            status.setText("Firebase sign-in succeeded. Refreshing account verification status...");
+            Log.i(LOG_TAG, "Login success uid=" + currentUser.getUid()
+                    + " email=" + currentUser.getEmail());
+            showAuthStatus(status, "Sign in successful. Opening TripMate...", COLOR_BLUE);
             checkVerifiedAndOpen(currentUser, status);
         });
     }
