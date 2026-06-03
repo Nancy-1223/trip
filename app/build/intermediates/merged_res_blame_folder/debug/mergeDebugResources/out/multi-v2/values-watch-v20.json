@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-watch-v20/values-watch-v20.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-watch-v20/values-watch-v20.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\47d5198d4d131de78404aec5c04ab227\\transformed\\play-services-auth-20.7.0\\res\\values-watch-v20\\values.xml",

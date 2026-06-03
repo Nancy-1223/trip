@@ -23,6 +23,13 @@ anim btn_radio_to_off_mtrl_ring_outer_path_animation
 anim btn_radio_to_on_mtrl_dot_group_animation
 anim btn_radio_to_on_mtrl_ring_outer_animation
 anim btn_radio_to_on_mtrl_ring_outer_path_animation
+anim fragment_fast_out_extra_slow_in
+animator fragment_close_enter
+animator fragment_close_exit
+animator fragment_fade_enter
+animator fragment_fade_exit
+animator fragment_open_enter
+animator fragment_open_exit
 attr actionBarDivider
 attr actionBarItemBackground
 attr actionBarPopupTheme
@@ -796,6 +803,8 @@ id fitCenter
 id fitEnd
 id fitStart
 id forever
+id fragment_container_view_tag
+id glide_custom_view_target_tag
 id group_divider
 id hide_ime_id
 id home
@@ -854,6 +863,7 @@ id showCustom
 id showHome
 id showTitle
 id spacer
+id special_effects_controller_view_tag
 id split_action_bar
 id src_atop
 id src_in
@@ -893,6 +903,7 @@ id view_tree_lifecycle_owner
 id view_tree_on_back_pressed_dispatcher_owner
 id view_tree_saved_state_registry_owner
 id view_tree_view_model_store_owner
+id visible_removing_fragment_view_tag
 id wide
 id withText
 id wrap_content
@@ -1397,6 +1408,8 @@ styleable CompoundButton android_button buttonCompat buttonTint buttonTintMode
 styleable DrawerArrowToggle arrowHeadLength arrowShaftLength barLength color drawableSize gapBetweenBars spinBars thickness
 styleable FontFamily fontProviderAuthority fontProviderCerts fontProviderFetchStrategy fontProviderFetchTimeout fontProviderPackage fontProviderQuery fontProviderSystemFontFamily
 styleable FontFamilyFont android_font android_fontWeight android_fontStyle android_ttcIndex android_fontVariationSettings font fontStyle fontVariationSettings fontWeight ttcIndex
+styleable Fragment android_name android_id android_tag
+styleable FragmentContainerView android_name android_tag
 styleable GradientColor android_startColor android_endColor android_type android_centerX android_centerY android_gradientRadius android_tileMode android_centerColor android_startX android_startY android_endX android_endY
 styleable GradientColorItem android_color android_offset
 styleable LinearLayoutCompat android_gravity android_orientation android_baselineAligned android_baselineAlignedChildIndex android_weightSum divider dividerPadding measureWithLargestChild showDividers

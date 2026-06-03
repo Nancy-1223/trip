@@ -30,6 +30,33 @@ let mapUserHasInteracted = false;
 let lastAutoFitRouteKey = null;
 let pendingSignupEmail = sessionStorage.getItem('pendingSignupEmail') || '';
 let pendingSignupName = sessionStorage.getItem('pendingSignupName') || '';
+let tripsLoadPromise = null;
+let routeDrawTimer = null;
+let routeRequestSeq = 0;
+let lastRouteDrawKey = '';
+const routeCache = new Map();
+const touristSpotCache = new Map();
+
+function readCachedLocation() {
+    try {
+        const raw = localStorage.getItem('tripmateLastLocation');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return getValidLatLng({ lat: parsed.lat, lng: parsed.lng });
+    } catch {
+        return null;
+    }
+}
+
+function writeCachedLocation(latLng) {
+    try {
+        localStorage.setItem('tripmateLastLocation', JSON.stringify({
+            lat: latLng[0],
+            lng: latLng[1],
+            time: Date.now()
+        }));
+    } catch {}
+}
 
 function showAndroidLoginIfAvailable() {
     if (window.TripMateAndroid && typeof window.TripMateAndroid.showLogin === 'function') {
@@ -287,6 +314,8 @@ function showToast(msg, duration = 2200) {
 
 // ─── Load Trips ───────────────────────────────────────────────────────────────
 async function loadTrips() {
+    if (tripsLoadPromise) return tripsLoadPromise;
+    tripsLoadPromise = (async () => {
     try {
         const res = await fetch('/api/trips');
         if (res.status === 401) {
@@ -303,7 +332,11 @@ async function loadTrips() {
     } catch (err) {
         console.error('[TripMate] Trips load failed:', err);
         document.getElementById('trips-list').innerHTML = '<div class="empty-placeholder">Could not load trips.</div>';
+    } finally {
+        tripsLoadPromise = null;
     }
+    })();
+    return tripsLoadPromise;
 }
 
 function renderTripsList() {
@@ -534,7 +567,15 @@ async function startTrip() {
 function initMap() {
     if (map) { setTimeout(() => map.invalidateSize(), 150); return; }
     console.log('[TripMate] Initializing map');
-    map = L.map('map', { zoomControl: false }).setView(FALLBACK_LATLNG, 5);
+    const cachedLocation = readCachedLocation();
+    if (cachedLocation && !userCurrentLatLng) {
+        userCurrentLatLng = cachedLocation;
+        currentLat = cachedLocation[0];
+        currentLng = cachedLocation[1];
+        gpsLocationReady = true;
+        console.log('[TripMate] Map using cached location:', cachedLocation);
+    }
+    map = L.map('map', { zoomControl: false }).setView(cachedLocation || FALLBACK_LATLNG, cachedLocation ? 13 : 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
     mapPolyline = L.polyline([], { color: '#3b82f6', weight: 6, opacity: 0.8, dashArray: '12,8' }).addTo(map);
     routePolyline = L.polyline([], { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(map);
@@ -559,7 +600,7 @@ function updateCurrentLocationMarker(latLng, shouldCenter = true) {
     mapMarker.setLatLng(latLng);
     if (!map.hasLayer(mapMarker)) mapMarker.addTo(map);
     const hasRoute = Boolean(routePolyline?.getLatLngs?.().length);
-    if (shouldCenter && !mapUserHasInteracted && !hasRoute) map.setView(latLng, 16);
+    if (shouldCenter && !mapUserHasInteracted && !hasRoute) map.panTo(latLng);
 }
 
 async function updateDetectedLocationInput(latLng) {
@@ -591,6 +632,7 @@ function applyLiveLocation(lat, lng, shouldCenter = true) {
     currentLng = latLng[1];
     gpsLocationReady = true;
     userCurrentLatLng = latLng;
+    writeCachedLocation(latLng);
     console.log('[TripMate] Live location applied:', currentLat, currentLng);
 
     updateCurrentLocationMarker(latLng, shouldCenter);
@@ -601,12 +643,19 @@ function applyLiveLocation(lat, lng, shouldCenter = true) {
         if (mapPolyline) mapPolyline.setLatLngs(pathData);
     }
 
-    if (activeDestinationName) drawRouteToDestination(activeDestinationName);
+    if (activeDestinationName) scheduleRouteToDestination(activeDestinationName);
 }
 
 window.updateNativeLocation = function(lat, lng) {
     applyLiveLocation(lat, lng, false);
 };
+
+function scheduleRouteToDestination(destinationName) {
+    clearTimeout(routeDrawTimer);
+    routeDrawTimer = setTimeout(() => {
+        drawRouteToDestination(destinationName);
+    }, 700);
+}
 
 function handleGpsFailure() {
     if (!gpsAlertShown) {
@@ -636,7 +685,7 @@ function startLiveLocationWatch(destinationName = activeDestinationName) {
     }
 
     if (watchId !== null) {
-        if (gpsLocationReady && activeDestinationName) drawRouteToDestination(activeDestinationName);
+        if (gpsLocationReady && activeDestinationName) scheduleRouteToDestination(activeDestinationName);
         return;
     }
 
@@ -806,6 +855,14 @@ async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
         console.error('[TripMate] Invalid route endpoints:', { sourceLatLng, destinationLatLng });
         return null;
     }
+    const cacheKey = [
+        source.map(n => Number(n).toFixed(4)).join(','),
+        destination.map(n => Number(n).toFixed(4)).join(',')
+    ].join('->');
+    if (routeCache.has(cacheKey)) {
+        console.log('[TripMate] Route cache hit:', cacheKey);
+        return routeCache.get(cacheKey);
+    }
 
     const url = `https://router.project-osrm.org/route/v1/driving/${source[1]},${source[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
     console.log('[TripMate] Current GPS:', currentLat, currentLng);
@@ -836,11 +893,16 @@ async function fetchRouteGeometry(sourceLatLng, destinationLatLng) {
         return null;
     }
 
-    return {
+    const result = {
         distance: Number(route.distance) || 0,
         duration: Number(route.duration) || 0,
         latLngs
     };
+    routeCache.set(cacheKey, result);
+    if (routeCache.size > 8) {
+        routeCache.delete(routeCache.keys().next().value);
+    }
+    return result;
 }
 
 function drawRoutePolyline(routeLatLngs, destinationLatLng) {
@@ -870,17 +932,13 @@ function drawRoutePolyline(routeLatLngs, destinationLatLng) {
     if (routeStart) boundsPoints.push(routeStart);
     if (validDestination) boundsPoints.push(validDestination);
 
-    const destinationKey = validDestination ? validDestination.map(n => Number(n).toFixed(5)).join(',') : 'no-dest';
-    const routeKey = destinationKey;
-    if (!mapUserHasInteracted && lastAutoFitRouteKey !== routeKey) {
-        map.fitBounds(L.latLngBounds(boundsPoints), { padding: [46, 46], maxZoom: 15 });
-        lastAutoFitRouteKey = routeKey;
-    }
+    lastAutoFitRouteKey = validDestination ? validDestination.map(n => Number(n).toFixed(5)).join(',') : 'no-dest';
     setTimeout(() => map.invalidateSize(), 150);
     return true;
 }
 
 async function drawRouteToDestination(destinationName) {
+    const requestId = ++routeRequestSeq;
     const destinationText = String(destinationName || '').trim();
     const routeStart = getRouteStartLatLng();
     if (!map) initMap();
@@ -894,9 +952,16 @@ async function drawRouteToDestination(destinationName) {
         showToast('Waiting for live GPS location...');
         return;
     }
+    const routeKey = `${destinationText}|${routeStart[0].toFixed(4)},${routeStart[1].toFixed(4)}`;
+    if (routeKey === lastRouteDrawKey && routePolyline?.getLatLngs?.().length) {
+        return;
+    }
+    lastRouteDrawKey = routeKey;
+    showToast('Updating route...', 900);
 
     try {
         const destinationLatLng = await geocodeDestination(destinationText);
+        if (requestId !== routeRequestSeq) return;
         if (!destinationLatLng) {
             clearRoutePolyline();
             showToast(`Destination location not found: ${destinationText}`);
@@ -905,6 +970,7 @@ async function drawRouteToDestination(destinationName) {
         console.log('[TripMate] Geocoded coordinates:', destinationLatLng[0], destinationLatLng[1]);
 
         const route = await fetchRouteGeometry(routeStart, destinationLatLng);
+        if (requestId !== routeRequestSeq) return;
         if (!route || !route.latLngs.length) {
             clearRoutePolyline();
             showToast('Route not available');
@@ -950,11 +1016,7 @@ function addTouristSpotMarkers(spots, destination = '', autoFit = true) {
         boundsPoints.push(latLng);
     });
 
-    if (boundsPoints.length && autoFit) {
-        if (!mapUserHasInteracted) {
-            map.fitBounds(L.latLngBounds(boundsPoints), { padding: [42, 42], maxZoom: 15 });
-        }
-    } else if (destination) {
+    if (!boundsPoints.length && destination) {
         showToast(`No mappable tourist spots found for ${destination}.`);
     }
 
@@ -966,12 +1028,20 @@ async function addTouristSpotMarkersForDestination(destination) {
     if (!destination) return 0;
     console.log('[TripMate] Loading tourist spots for destination:', destination);
     try {
+        const cacheKey = destination.trim().toLowerCase();
+        if (touristSpotCache.has(cacheKey)) {
+            return addTouristSpotMarkers(touristSpotCache.get(cacheKey), destination, false);
+        }
         const res = await fetch(`/api/tourist-spots?destination=${encodeURIComponent(destination)}`);
         const spots = await res.json();
         if (!Array.isArray(spots) || !spots.length) {
             clearTouristSpotMarkers();
             showToast(`No tourist spots found for ${destination}.`);
             return 0;
+        }
+        touristSpotCache.set(cacheKey, spots);
+        if (touristSpotCache.size > 8) {
+            touristSpotCache.delete(touristSpotCache.keys().next().value);
         }
         return addTouristSpotMarkers(spots, destination, false);
     } catch (err) {
@@ -1412,8 +1482,10 @@ async function updatePlannerRoute() {
         plannerLastStartLatLng = [waypoints[0].lat, waypoints[0].lng];
         plannerLastDestinationLatLng = [waypoints[waypoints.length - 1].lat, waypoints[waypoints.length - 1].lng];
         plannerRoutingControl.setWaypoints(waypoints);
-        const bounds = L.latLngBounds(waypoints);
-        plannerMap.fitBounds(bounds, { padding: [50, 50] });
+        if (!plannerMap._tripMateInitialPlannerPanDone) {
+            plannerMap.panTo(waypoints[0]);
+            plannerMap._tripMateInitialPlannerPanDone = true;
+        }
     }
 }
 

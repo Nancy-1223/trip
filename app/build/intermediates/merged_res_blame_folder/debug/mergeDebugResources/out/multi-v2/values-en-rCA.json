@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-en-rCA/values-en-rCA.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-en-rCA/values-en-rCA.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\1ca058f2bd7e21b4d04d082e681993b0\\transformed\\credentials-1.2.0-rc01\\res\\values-en-rCA\\values-en-rCA.xml",

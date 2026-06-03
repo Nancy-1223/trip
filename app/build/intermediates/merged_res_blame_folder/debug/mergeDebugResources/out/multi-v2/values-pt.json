@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-pt/values-pt.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-pt/values-pt.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\f38dc68462df2b7804ba6a7ab0c3d3cc\\transformed\\core-1.13.0\\res\\values-pt\\values-pt.xml",

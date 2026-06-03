@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-pt-rBR/values-pt-rBR.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-pt-rBR/values-pt-rBR.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\e35cbc93cdb876209417eae55f94b661\\transformed\\appcompat-1.1.0\\res\\values-pt-rBR\\values-pt-rBR.xml",
@@ -38,23 +38,6 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\6690b06721699fbf3d4e6f1c9a0facf1\\transformed\\play-services-base-18.0.1\\res\\values-pt-rBR\\values.xml",
-                    "from": {
-                        "startLines": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
-                        "startColumns": "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",
-                        "startOffsets": "197,298,442,565,669,832,958,1076,1177,1343,1447,1607,1733,1886,2039,2104,2166",
-                        "endColumns": "100,143,122,103,162,125,117,100,165,103,159,125,152,152,64,61,79",
-                        "endOffsets": "297,441,564,668,831,957,1075,1176,1342,1446,1606,1732,1885,2038,2103,2165,2245"
-                    },
-                    "to": {
-                        "startLines": "38,39,40,41,42,43,44,45,47,48,49,50,51,52,53,54,55",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "3809,3914,4062,4189,4297,4464,4594,4716,4966,5136,5244,5408,5538,5695,5852,5921,5987",
-                        "endColumns": "104,147,126,107,166,129,121,104,169,107,163,129,156,156,68,65,83",
-                        "endOffsets": "3909,4057,4184,4292,4459,4589,4711,4816,5131,5239,5403,5533,5690,5847,5916,5982,6066"
-                    }
-                },
-                {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\91a18a130673c7658ec120685f8fc143\\transformed\\browser-1.4.0\\res\\values-pt-rBR\\values-pt-rBR.xml",
                     "from": {
                         "startLines": "2,3,4,5",
@@ -86,6 +69,23 @@
                         "startOffsets": "4821",
                         "endColumns": "144",
                         "endOffsets": "4961"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\3e2752226071bd30352de8c98478d9cb\\transformed\\play-services-base-18.5.0\\res\\values-pt-rBR\\values.xml",
+                    "from": {
+                        "startLines": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
+                        "startColumns": "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",
+                        "startOffsets": "197,298,442,565,669,832,958,1076,1177,1343,1447,1607,1733,1886,2039,2104,2166",
+                        "endColumns": "100,143,122,103,162,125,117,100,165,103,159,125,152,152,64,61,79",
+                        "endOffsets": "297,441,564,668,831,957,1075,1176,1342,1446,1606,1732,1885,2038,2103,2165,2245"
+                    },
+                    "to": {
+                        "startLines": "38,39,40,41,42,43,44,45,47,48,49,50,51,52,53,54,55",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "3809,3914,4062,4189,4297,4464,4594,4716,4966,5136,5244,5408,5538,5695,5852,5921,5987",
+                        "endColumns": "104,147,126,107,166,129,121,104,169,107,163,129,156,156,68,65,83",
+                        "endOffsets": "3909,4057,4184,4292,4459,4589,4711,4816,5131,5239,5403,5533,5690,5847,5916,5982,6066"
                     }
                 },
                 {

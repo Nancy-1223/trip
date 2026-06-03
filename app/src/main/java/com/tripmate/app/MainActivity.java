@@ -17,6 +17,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
 import android.text.InputType;
 import android.util.Patterns;
 import android.util.Log;
@@ -46,6 +47,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
@@ -56,6 +59,7 @@ import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
@@ -63,6 +67,12 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
 import com.google.firebase.auth.FirebaseAuthInvalidUserException;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.UserProfileChangeRequest;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 
 import org.json.JSONObject;
 import org.json.JSONArray;
@@ -93,6 +103,7 @@ public class MainActivity extends ComponentActivity {
     private static final int REQUEST_CAMERA_MEMORIES = 13;
     private static final String MEMORIES_PREFS = "tripmate_camera_memories";
     private static final String MEMORIES_KEY = "photos";
+    private static final String LOCATION_PREFS = "tripmate_location_cache";
     private static final int COLOR_BG = Color.rgb(234, 237, 243);
     private static final int COLOR_CARD = Color.WHITE;
     private static final int COLOR_TEXT = Color.rgb(26, 29, 46);
@@ -116,10 +127,15 @@ public class MainActivity extends ComponentActivity {
     private LocationManager locationManager;
     private LocationListener locationListener;
     private Location lastNativeLocation;
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback fusedLocationCallback;
+    private boolean fusedUpdatesStarted;
     private ImageCapture imageCapture;
     private ProcessCameraProvider cameraProvider;
     private boolean nativeMemoryScreenOpen;
     private String lastKnownDestinationName = "";
+    private ActivityResultLauncher<String> galleryPickerLauncher;
+    private ActivityResultLauncher<String> mediaPermissionLauncher;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -127,8 +143,11 @@ public class MainActivity extends ComponentActivity {
         try {
             Log.i(LOG_TAG, "App launch started");
             configureWindow();
+            registerMemoryActivityResultLaunchers();
             showLoadingScreen("Starting TripMate...");
             pendingWebViewState = savedInstanceState;
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+            loadCachedNativeLocation();
 
             if (FirebaseApp.initializeApp(this) == null) {
                 Log.e(LOG_TAG, "Firebase config missing or invalid");
@@ -578,6 +597,11 @@ public class MainActivity extends ComponentActivity {
 
     private void checkVerifiedAndOpen(FirebaseUser user, TextView status) {
         Log.i(LOG_TAG, "Reloading Firebase user uid=" + user.getUid() + " email=" + user.getEmail());
+        if (status == null && user.isEmailVerified()) {
+            Log.i(LOG_TAG, "Using cached verified Firebase user for fast startup uid=" + user.getUid());
+            exchangeFirebaseToken(user);
+            return;
+        }
         if (status == null) {
             showLoadingScreen("Checking your TripMate session...");
         }
@@ -803,10 +827,32 @@ public class MainActivity extends ComponentActivity {
 
         setContentView(webView);
         setupNativeLocationBridge();
-        if (!requestInitialPermissions()) {
-            loadTripMate();
-            startNativeLocationUpdates();
-        }
+        loadTripMate();
+        startNativeLocationUpdates();
+        requestInitialPermissions();
+    }
+
+    private void registerMemoryActivityResultLaunchers() {
+        galleryPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetMultipleContents(),
+                uris -> {
+                    if (uris == null || uris.isEmpty()) {
+                        Log.i(LOG_TAG, "Gallery selection cancelled");
+                        return;
+                    }
+                    importGalleryMemories(uris);
+                });
+        mediaPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> {
+                    if (granted) {
+                        Log.i(LOG_TAG, "Media image permission granted");
+                        launchGalleryPicker();
+                    } else {
+                        Log.w(LOG_TAG, "Media image permission denied");
+                        Toast.makeText(this, "Gallery permission denied. You can still use Camera.", Toast.LENGTH_LONG).show();
+                    }
+                });
     }
 
     private void openCameraMemories() {
@@ -852,15 +898,22 @@ public class MainActivity extends ComponentActivity {
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER);
-        Button galleryButton = createNativeButton("My Trip Memories", COLOR_TEXT);
-        galleryButton.setOnClickListener(view -> showCameraGalleryScreen());
+        Button chooseButton = createNativeButton("Choose From Gallery", COLOR_TEXT);
+        chooseButton.setOnClickListener(view -> openGalleryMemories());
         Button captureButton = createNativeButton("Capture Photo", COLOR_BLUE);
         captureButton.setOnClickListener(view -> captureTravelMemory(captureButton));
-        actions.addView(galleryButton, new LinearLayout.LayoutParams(0, dp(54), 1));
+        actions.addView(chooseButton, new LinearLayout.LayoutParams(0, dp(54), 1));
         LinearLayout.LayoutParams captureParams = new LinearLayout.LayoutParams(0, dp(54), 1);
         captureParams.leftMargin = dp(10);
         actions.addView(captureButton, captureParams);
         content.addView(actions);
+
+        Button galleryButton = createNativeButton("My Trip Memories", COLOR_TEXT);
+        galleryButton.setOnClickListener(view -> showCameraGalleryScreen());
+        LinearLayout.LayoutParams galleryParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(50));
+        galleryParams.topMargin = dp(10);
+        content.addView(galleryButton, galleryParams);
 
         setContentView(root);
         startCameraPreview(previewView);
@@ -948,7 +1001,7 @@ public class MainActivity extends ComponentActivity {
             public void onImageSaved(ImageCapture.OutputFileResults outputFileResults) {
                 try {
                     compressImageFile(outputFile);
-                    saveMemoryMetadata(outputFile);
+                    saveMemoryMetadata(outputFile, "camera");
                     runOnUiThread(() -> {
                         captureButton.setEnabled(true);
                         captureButton.setText("Capture Photo");
@@ -975,6 +1028,79 @@ public class MainActivity extends ComponentActivity {
                 });
             }
         });
+    }
+
+    private void openGalleryMemories() {
+        Log.i(LOG_TAG, "Gallery memories requested");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Gallery permission is needed to import memories.", Toast.LENGTH_LONG).show();
+            mediaPermissionLauncher.launch(Manifest.permission.READ_MEDIA_IMAGES);
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Gallery permission is needed to import memories.", Toast.LENGTH_LONG).show();
+            mediaPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE);
+            return;
+        }
+        launchGalleryPicker();
+    }
+
+    private void launchGalleryPicker() {
+        try {
+            Log.i(LOG_TAG, "Launching gallery multi-select");
+            galleryPickerLauncher.launch("image/*");
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "Gallery picker launch failed", exception);
+            Toast.makeText(this, "Could not open gallery.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void importGalleryMemories(List<Uri> uris) {
+        Toast.makeText(this, "Importing memories...", Toast.LENGTH_SHORT).show();
+        cameraExecutor.execute(() -> {
+            int saved = 0;
+            for (Uri uri : uris) {
+                try {
+                    File file = importGalleryMemory(uri);
+                    if (file != null) {
+                        compressImageFile(file);
+                        saveMemoryMetadata(file, "gallery");
+                        saved++;
+                    }
+                } catch (Exception exception) {
+                    Log.e(LOG_TAG, "Importing gallery memory failed uri=" + uri, exception);
+                }
+            }
+            int finalSaved = saved;
+            runOnUiThread(() -> {
+                if (finalSaved > 0) {
+                    Toast.makeText(this, finalSaved + " memory photo" + (finalSaved == 1 ? "" : "s") + " saved.", Toast.LENGTH_LONG).show();
+                    showCameraGalleryScreen();
+                } else {
+                    Toast.makeText(this, "No photos could be imported.", Toast.LENGTH_LONG).show();
+                }
+            });
+        });
+    }
+
+    private File importGalleryMemory(Uri uri) throws Exception {
+        File outputFile = createMemoryImageFile();
+        try (InputStream input = getContentResolver().openInputStream(uri);
+             FileOutputStream output = new FileOutputStream(outputFile)) {
+            if (input == null) {
+                return null;
+            }
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+        }
+        Log.i(LOG_TAG, "Imported gallery memory file=" + outputFile.getAbsolutePath());
+        return outputFile;
     }
 
     private File createMemoryImageFile() {
@@ -1008,12 +1134,13 @@ public class MainActivity extends ComponentActivity {
         Log.i(LOG_TAG, "Compressed memory image bytes=" + file.length());
     }
 
-    private void saveMemoryMetadata(File file) throws Exception {
+    private void saveMemoryMetadata(File file, String source) throws Exception {
         JSONArray array = readMemoryMetadataArray();
         JSONObject item = new JSONObject();
         long now = System.currentTimeMillis();
         item.put("path", file.getAbsolutePath());
         item.put("created_at", now);
+        item.put("source", source);
         Location location = lastNativeLocation;
         if (location != null) {
             item.put("lat", location.getLatitude());
@@ -1085,13 +1212,18 @@ public class MainActivity extends ComponentActivity {
         }
 
         LinearLayout bottom = new LinearLayout(this);
+        bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setGravity(Gravity.CENTER);
         bottom.setPadding(dp(18), dp(10), dp(18), dp(18));
         bottom.setBackgroundColor(COLOR_BG);
         Button camera = createNativeButton("Camera", COLOR_BLUE);
         camera.setOnClickListener(view -> openCameraMemories());
-        bottom.addView(camera, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+        Button choose = createNativeButton("Choose From Gallery", COLOR_TEXT);
+        choose.setOnClickListener(view -> openGalleryMemories());
+        bottom.addView(camera, new LinearLayout.LayoutParams(0, dp(54), 1));
+        LinearLayout.LayoutParams chooseParams = new LinearLayout.LayoutParams(0, dp(54), 1);
+        chooseParams.leftMargin = dp(10);
+        bottom.addView(choose, chooseParams);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM);
         root.addView(bottom, bottomParams);
@@ -1104,7 +1236,10 @@ public class MainActivity extends ComponentActivity {
         root.setBackgroundColor(Color.BLACK);
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        image.setImageBitmap(decodeBitmap(item.optString("path"), 2200));
+        Glide.with(this)
+                .load(new File(item.optString("path")))
+                .fitCenter()
+                .into(image);
         root.addView(image, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
@@ -1204,7 +1339,11 @@ public class MainActivity extends ComponentActivity {
         @Override
         public void onBindViewHolder(MemoryViewHolder holder, int position) {
             JSONObject item = items.get(position);
-            holder.image.setImageBitmap(decodeBitmap(item.optString("path"), 500));
+            Glide.with(MainActivity.this)
+                    .load(new File(item.optString("path")))
+                    .centerCrop()
+                    .thumbnail(0.25f)
+                    .into(holder.image);
             holder.details.setText(item.optString("place", "Current trip") + "\n" + formatMemoryDetails(item));
             holder.itemView.setOnClickListener(view -> showFullScreenMemory(item));
         }
@@ -1301,26 +1440,32 @@ public class MainActivity extends ComponentActivity {
             public void onStatusChanged(String provider, int status, Bundle extras) {
             }
         };
+        fusedLocationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                if (locationResult == null) {
+                    return;
+                }
+                Location location = locationResult.getLastLocation();
+                if (location != null) {
+                    Log.i(LOG_TAG, "Fused live location lat=" + location.getLatitude()
+                            + " lng=" + location.getLongitude());
+                    sendLocationToWebView(location);
+                }
+            }
+        };
     }
 
     private boolean requestInitialPermissions() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return false;
         }
-        String mediaPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
         List<String> permissions = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
         }
         if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        }
-        if (checkSelfPermission(mediaPermission) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(mediaPermission);
-        }
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.CAMERA);
         }
         if (permissions.isEmpty()) {
             return false;
@@ -1348,31 +1493,75 @@ public class MainActivity extends ComponentActivity {
 
     @SuppressLint("MissingPermission")
     private void startNativeLocationUpdates() {
-        if (locationManager == null || locationListener == null || !hasLocationPermission()) {
+        if (!hasLocationPermission()) {
             Log.i(LOG_TAG, "Native location updates skipped permission=" + hasLocationPermission());
+            sendLocationToWebView(lastNativeLocation);
             return;
         }
+        if (fusedLocationClient == null) {
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        }
         try {
-            Location lastKnown = null;
-            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 3f, locationListener);
-                lastKnown = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            if (lastNativeLocation != null) {
+                sendLocationToWebView(lastNativeLocation);
             }
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 3f, locationListener);
-                Location networkLastKnown = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-                if (lastKnown == null || (networkLastKnown != null && networkLastKnown.getTime() > lastKnown.getTime())) {
-                    lastKnown = networkLastKnown;
+            fusedLocationClient.getLastLocation()
+                    .addOnSuccessListener(location -> {
+                        if (location != null) {
+                            Log.i(LOG_TAG, "Fused last known location lat=" + location.getLatitude()
+                                    + " lng=" + location.getLongitude());
+                            sendLocationToWebView(location);
+                        } else {
+                            Log.i(LOG_TAG, "Fused last known location unavailable; using cache if present");
+                            sendLocationToWebView(lastNativeLocation);
+                        }
+                    })
+                    .addOnFailureListener(exception -> Log.e(LOG_TAG, "Fused last location failed", exception));
+            if (!fusedUpdatesStarted) {
+                LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 5000L)
+                        .setMinUpdateIntervalMillis(1500L)
+                        .setMaxUpdateDelayMillis(8000L)
+                        .build();
+                if (fusedLocationCallback == null) {
+                    setupNativeLocationBridge();
                 }
-            }
-            if (lastKnown != null) {
-                Log.i(LOG_TAG, "Native last known location lat=" + lastKnown.getLatitude()
-                        + " lng=" + lastKnown.getLongitude());
-                sendLocationToWebView(lastKnown);
+                fusedLocationClient.requestLocationUpdates(request, fusedLocationCallback, Looper.getMainLooper());
+                fusedUpdatesStarted = true;
+                Log.i(LOG_TAG, "Fused background location updates started");
             }
         } catch (Exception exception) {
             Log.e(LOG_TAG, "Native location updates failed", exception);
         }
+    }
+
+    private void loadCachedNativeLocation() {
+        try {
+            SharedPreferences prefs = getSharedPreferences(LOCATION_PREFS, MODE_PRIVATE);
+            if (!prefs.contains("lat") || !prefs.contains("lng")) {
+                return;
+            }
+            Location location = new Location("tripmate-cache");
+            location.setLatitude(Double.longBitsToDouble(prefs.getLong("lat", 0)));
+            location.setLongitude(Double.longBitsToDouble(prefs.getLong("lng", 0)));
+            location.setTime(prefs.getLong("time", System.currentTimeMillis()));
+            lastNativeLocation = location;
+            Log.i(LOG_TAG, "Cached location loaded lat=" + location.getLatitude()
+                    + " lng=" + location.getLongitude());
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "Cached location load failed", exception);
+        }
+    }
+
+    private void cacheNativeLocation(Location location) {
+        if (location == null) {
+            return;
+        }
+        getSharedPreferences(LOCATION_PREFS, MODE_PRIVATE)
+                .edit()
+                .putLong("lat", Double.doubleToRawLongBits(location.getLatitude()))
+                .putLong("lng", Double.doubleToRawLongBits(location.getLongitude()))
+                .putLong("time", location.getTime() > 0 ? location.getTime() : System.currentTimeMillis())
+                .apply();
     }
 
     private void sendLocationToWebView(Location location) {
@@ -1380,6 +1569,7 @@ public class MainActivity extends ComponentActivity {
             return;
         }
         lastNativeLocation = location;
+        cacheNativeLocation(location);
         runOnUiThread(() -> {
             if (webView == null) return;
             try {
@@ -1410,7 +1600,6 @@ public class MainActivity extends ComponentActivity {
             geolocationOrigin = null;
         }
         if (requestCode == REQUEST_APP_PERMISSIONS) {
-            loadTripMate();
             startNativeLocationUpdates();
         } else if (requestCode == REQUEST_GEOLOCATION_PERMISSION) {
             startNativeLocationUpdates();
@@ -1464,8 +1653,9 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (locationManager != null && locationListener != null) {
-            locationManager.removeUpdates(locationListener);
+        if (fusedLocationClient != null && fusedLocationCallback != null && fusedUpdatesStarted) {
+            fusedLocationClient.removeLocationUpdates(fusedLocationCallback);
+            fusedUpdatesStarted = false;
         }
     }
 

@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-hu/values-hu.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-hu/values-hu.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\f38dc68462df2b7804ba6a7ab0c3d3cc\\transformed\\core-1.13.0\\res\\values-hu\\values-hu.xml",
@@ -89,7 +89,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\6690b06721699fbf3d4e6f1c9a0facf1\\transformed\\play-services-base-18.0.1\\res\\values-hu\\values.xml",
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\3e2752226071bd30352de8c98478d9cb\\transformed\\play-services-base-18.5.0\\res\\values-hu\\values.xml",
                     "from": {
                         "startLines": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
                         "startColumns": "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0",

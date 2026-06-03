@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.tripmate.app-mergeDebugResources-39:/values-en-rIN/values-en-rIN.xml",
+            "outputFile": "com.tripmate.app-mergeDebugResources-41:/values-en-rIN/values-en-rIN.xml",
             "map": [
                 {
                     "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\91a18a130673c7658ec120685f8fc143\\transformed\\browser-1.4.0\\res\\values-en-rIN\\values-en-rIN.xml",
