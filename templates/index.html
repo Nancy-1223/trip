@@ -291,7 +291,7 @@
             <button class="round-btn orange" onclick="openQuickNote()"><i data-lucide="edit-3"></i></button>
             <button class="round-btn blue" onclick="centerMapOnUser()"><i data-lucide="crosshair"></i></button>
             <button class="round-btn" style="color:#14b8a6" onclick="openExpenseModal(currentTripId)"><i data-lucide="wallet"></i></button>
-            <button class="round-btn purple" onclick="openQuickCamera()"><i data-lucide="camera"></i></button>
+            <button class="round-btn purple" onclick="openQuickCamera()" title="Camera" aria-label="Camera"><i data-lucide="camera"></i></button>
             <button class="end-trip-btn" onclick="endTrip()">END TRIP</button>
         </div>
     </div>
@@ -315,7 +315,7 @@
         <header class="header">
             <button class="icon-btn" onclick="showView('dashboard-view')"><i data-lucide="arrow-left"></i></button>
             <h2 class="view-title">Memories</h2>
-            <button class="icon-btn purple" onclick="openImageUpload()"><i data-lucide="upload"></i></button>
+            <button class="icon-btn purple" onclick="openQuickCamera()" title="Camera"><i data-lucide="camera"></i></button>
         </header>
         <div id="memories-grid" class="memories-grid"></div>
     </div>

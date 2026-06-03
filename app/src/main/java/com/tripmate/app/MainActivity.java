@@ -2,10 +2,12 @@ package com.tripmate.app;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -20,6 +22,7 @@ import android.util.Patterns;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
@@ -36,9 +39,22 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.activity.ComponentActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.view.PreviewView;
+import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
@@ -49,25 +65,34 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.UserProfileChangeRequest;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MainActivity extends Activity {
+public class MainActivity extends ComponentActivity {
     private static final String LOG_TAG = "TripMate";
     private static final String TRIPMATE_URL = "https://trip-y62q.onrender.com";
     private static final int REQUEST_APP_PERMISSIONS = 10;
     private static final int REQUEST_GEOLOCATION_PERMISSION = 11;
     private static final int REQUEST_FILE_CHOOSER = 12;
+    private static final int REQUEST_CAMERA_MEMORIES = 13;
+    private static final String MEMORIES_PREFS = "tripmate_camera_memories";
+    private static final String MEMORIES_KEY = "photos";
     private static final int COLOR_BG = Color.rgb(234, 237, 243);
     private static final int COLOR_CARD = Color.WHITE;
     private static final int COLOR_TEXT = Color.rgb(26, 29, 46);
@@ -80,6 +105,7 @@ public class MainActivity extends Activity {
     private static final int COLOR_GREEN = Color.rgb(34, 197, 94);
 
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService cameraExecutor = Executors.newSingleThreadExecutor();
     private FirebaseAuth firebaseAuth;
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
@@ -90,6 +116,10 @@ public class MainActivity extends Activity {
     private LocationManager locationManager;
     private LocationListener locationListener;
     private Location lastNativeLocation;
+    private ImageCapture imageCapture;
+    private ProcessCameraProvider cameraProvider;
+    private boolean nativeMemoryScreenOpen;
+    private String lastKnownDestinationName = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -779,6 +809,423 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void openCameraMemories() {
+        Log.i(LOG_TAG, "Camera memories requested");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Camera permission is needed to capture memories.", Toast.LENGTH_LONG).show();
+            try {
+                requestPermissions(new String[] { Manifest.permission.CAMERA }, REQUEST_CAMERA_MEMORIES);
+            } catch (Exception exception) {
+                Log.e(LOG_TAG, "Camera permission request failed", exception);
+                Toast.makeText(this, "Camera permission request failed.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        showCameraScreen();
+    }
+
+    private void showCameraScreen() {
+        nativeMemoryScreenOpen = true;
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(COLOR_BG);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(24), dp(18), dp(18));
+        root.addView(content, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        LinearLayout header = createNativeHeader("Travel Memories", "Capture this moment");
+        content.addView(header);
+
+        PreviewView previewView = new PreviewView(this);
+        previewView.setBackgroundColor(Color.BLACK);
+        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1);
+        previewParams.topMargin = dp(16);
+        previewParams.bottomMargin = dp(14);
+        previewView.setBackground(createRoundRect(Color.BLACK, dp(18)));
+        content.addView(previewView, previewParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        Button galleryButton = createNativeButton("My Trip Memories", COLOR_TEXT);
+        galleryButton.setOnClickListener(view -> showCameraGalleryScreen());
+        Button captureButton = createNativeButton("Capture Photo", COLOR_BLUE);
+        captureButton.setOnClickListener(view -> captureTravelMemory(captureButton));
+        actions.addView(galleryButton, new LinearLayout.LayoutParams(0, dp(54), 1));
+        LinearLayout.LayoutParams captureParams = new LinearLayout.LayoutParams(0, dp(54), 1);
+        captureParams.leftMargin = dp(10);
+        actions.addView(captureButton, captureParams);
+        content.addView(actions);
+
+        setContentView(root);
+        startCameraPreview(previewView);
+    }
+
+    private LinearLayout createNativeHeader(String titleText, String subtitleText) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        Button back = createTabButton("<", false);
+        back.setTextColor(COLOR_TEXT);
+        back.setTextSize(20);
+        back.setOnClickListener(view -> returnToTripMateWebView());
+        header.addView(back, new LinearLayout.LayoutParams(dp(46), dp(46)));
+
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setPadding(dp(14), 0, 0, 0);
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(COLOR_TEXT);
+        title.setTextSize(24);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView subtitle = new TextView(this);
+        subtitle.setText(subtitleText);
+        subtitle.setTextColor(COLOR_SUBTLE);
+        subtitle.setTextSize(13);
+        titles.addView(title);
+        titles.addView(subtitle);
+        header.addView(titles, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        return header;
+    }
+
+    private Button createNativeButton(String text, int color) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(text);
+        button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setTextColor(color == COLOR_BLUE ? Color.WHITE : COLOR_TEXT);
+        button.setBackground(color == COLOR_BLUE
+                ? createGradientRect(COLOR_BLUE, COLOR_BLUE_DARK, dp(14))
+                : createRoundRect(COLOR_CARD, dp(14)));
+        button.setElevation(dp(5));
+        return button;
+    }
+
+    private void startCameraPreview(PreviewView previewView) {
+        Log.i(LOG_TAG, "Starting CameraX preview");
+        com.google.common.util.concurrent.ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                ProcessCameraProvider.getInstance(this);
+        cameraProviderFuture.addListener(() -> {
+            try {
+                cameraProvider = cameraProviderFuture.get();
+                Preview preview = new Preview.Builder().build();
+                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+                imageCapture = new ImageCapture.Builder()
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .build();
+                cameraProvider.unbindAll();
+                cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture);
+                Log.i(LOG_TAG, "CameraX preview ready");
+            } catch (Exception exception) {
+                Log.e(LOG_TAG, "CameraX preview failed", exception);
+                Toast.makeText(this, "Could not open camera.", Toast.LENGTH_LONG).show();
+                showCameraGalleryScreen();
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void captureTravelMemory(Button captureButton) {
+        if (imageCapture == null) {
+            Toast.makeText(this, "Camera is still starting. Try again.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        captureButton.setEnabled(false);
+        captureButton.setText("Saving...");
+        File outputFile = createMemoryImageFile();
+        ImageCapture.OutputFileOptions options =
+                new ImageCapture.OutputFileOptions.Builder(outputFile).build();
+        Log.i(LOG_TAG, "Capturing travel memory file=" + outputFile.getAbsolutePath());
+        imageCapture.takePicture(options, cameraExecutor, new ImageCapture.OnImageSavedCallback() {
+            @Override
+            public void onImageSaved(ImageCapture.OutputFileResults outputFileResults) {
+                try {
+                    compressImageFile(outputFile);
+                    saveMemoryMetadata(outputFile);
+                    runOnUiThread(() -> {
+                        captureButton.setEnabled(true);
+                        captureButton.setText("Capture Photo");
+                        Toast.makeText(MainActivity.this, "Travel memory saved.", Toast.LENGTH_LONG).show();
+                        showCameraGalleryScreen();
+                    });
+                } catch (Exception exception) {
+                    Log.e(LOG_TAG, "Saving captured memory failed", exception);
+                    runOnUiThread(() -> {
+                        captureButton.setEnabled(true);
+                        captureButton.setText("Capture Photo");
+                        Toast.makeText(MainActivity.this, "Could not save photo.", Toast.LENGTH_LONG).show();
+                    });
+                }
+            }
+
+            @Override
+            public void onError(ImageCaptureException exception) {
+                Log.e(LOG_TAG, "Camera capture failed", exception);
+                runOnUiThread(() -> {
+                    captureButton.setEnabled(true);
+                    captureButton.setText("Capture Photo");
+                    Toast.makeText(MainActivity.this, "Photo capture failed.", Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private File createMemoryImageFile() {
+        File dir = new File(getFilesDir(), "travel_memories");
+        if (!dir.exists() && !dir.mkdirs()) {
+            Log.w(LOG_TAG, "Could not create memories directory");
+        }
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        return new File(dir, "tripmate_memory_" + timestamp + ".jpg");
+    }
+
+    private void compressImageFile(File file) throws Exception {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        int sample = 1;
+        while ((bounds.outWidth / sample) > 1600 || (bounds.outHeight / sample) > 1600) {
+            sample *= 2;
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        if (bitmap == null) {
+            return;
+        }
+        try (FileOutputStream out = new FileOutputStream(file, false)) {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 82, out);
+        } finally {
+            bitmap.recycle();
+        }
+        Log.i(LOG_TAG, "Compressed memory image bytes=" + file.length());
+    }
+
+    private void saveMemoryMetadata(File file) throws Exception {
+        JSONArray array = readMemoryMetadataArray();
+        JSONObject item = new JSONObject();
+        long now = System.currentTimeMillis();
+        item.put("path", file.getAbsolutePath());
+        item.put("created_at", now);
+        Location location = lastNativeLocation;
+        if (location != null) {
+            item.put("lat", location.getLatitude());
+            item.put("lng", location.getLongitude());
+        }
+        item.put("place", lastKnownDestinationName == null || lastKnownDestinationName.trim().isEmpty()
+                ? "Current trip" : lastKnownDestinationName.trim());
+        array.put(item);
+        getMemoryPrefs().edit().putString(MEMORIES_KEY, array.toString()).apply();
+        Log.i(LOG_TAG, "Saved memory metadata count=" + array.length());
+    }
+
+    private SharedPreferences getMemoryPrefs() {
+        return getSharedPreferences(MEMORIES_PREFS, MODE_PRIVATE);
+    }
+
+    private JSONArray readMemoryMetadataArray() {
+        try {
+            return new JSONArray(getMemoryPrefs().getString(MEMORIES_KEY, "[]"));
+        } catch (Exception exception) {
+            Log.e(LOG_TAG, "Memory metadata parse failed", exception);
+            return new JSONArray();
+        }
+    }
+
+    private List<JSONObject> readMemoryItems() {
+        JSONArray array = readMemoryMetadataArray();
+        List<JSONObject> items = new ArrayList<>();
+        for (int i = array.length() - 1; i >= 0; i--) {
+            JSONObject item = array.optJSONObject(i);
+            if (item != null && new File(item.optString("path")).exists()) {
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    private void showCameraGalleryScreen() {
+        nativeMemoryScreenOpen = true;
+        if (cameraProvider != null) {
+            cameraProvider.unbindAll();
+        }
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(COLOR_BG);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(24), dp(18), 0);
+        root.addView(content, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        content.addView(createNativeHeader("My Trip Memories", "Photos captured on your journey"));
+
+        RecyclerView recyclerView = new RecyclerView(this);
+        recyclerView.setLayoutManager(new GridLayoutManager(this, 2));
+        recyclerView.setPadding(0, dp(16), 0, dp(88));
+        recyclerView.setClipToPadding(false);
+        List<JSONObject> items = readMemoryItems();
+        if (items.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("No memories yet. Tap Camera to capture your first travel photo.");
+            empty.setTextColor(COLOR_SUBTLE);
+            empty.setTextSize(15);
+            empty.setGravity(Gravity.CENTER);
+            content.addView(empty, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        } else {
+            recyclerView.setAdapter(new MemoriesAdapter(items));
+            content.addView(recyclerView, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        }
+
+        LinearLayout bottom = new LinearLayout(this);
+        bottom.setGravity(Gravity.CENTER);
+        bottom.setPadding(dp(18), dp(10), dp(18), dp(18));
+        bottom.setBackgroundColor(COLOR_BG);
+        Button camera = createNativeButton("Camera", COLOR_BLUE);
+        camera.setOnClickListener(view -> openCameraMemories());
+        bottom.addView(camera, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM);
+        root.addView(bottom, bottomParams);
+        setContentView(root);
+    }
+
+    private void showFullScreenMemory(JSONObject item) {
+        nativeMemoryScreenOpen = true;
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setImageBitmap(decodeBitmap(item.optString("path"), 2200));
+        root.addView(image, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setPadding(dp(18), dp(14), dp(18), dp(24));
+        details.setBackgroundColor(Color.argb(200, 0, 0, 0));
+        TextView title = new TextView(this);
+        title.setText(item.optString("place", "Current trip"));
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(18);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView meta = new TextView(this);
+        meta.setText(formatMemoryDetails(item));
+        meta.setTextColor(Color.rgb(226, 232, 240));
+        meta.setTextSize(13);
+        details.addView(title);
+        details.addView(meta);
+        root.addView(details, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+
+        Button close = createTabButton("<", false);
+        close.setTextColor(Color.WHITE);
+        close.setTextSize(22);
+        close.setBackground(createRoundRect(Color.argb(120, 255, 255, 255), dp(12)));
+        close.setOnClickListener(view -> showCameraGalleryScreen());
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.LEFT);
+        closeParams.leftMargin = dp(18);
+        closeParams.topMargin = dp(24);
+        root.addView(close, closeParams);
+        setContentView(root);
+    }
+
+    private String formatMemoryDetails(JSONObject item) {
+        long createdAt = item.optLong("created_at", System.currentTimeMillis());
+        String date = new SimpleDateFormat("dd MMM yyyy", Locale.US).format(new Date(createdAt));
+        String time = new SimpleDateFormat("hh:mm a", Locale.US).format(new Date(createdAt));
+        if (item.has("lat") && item.has("lng")) {
+            return date + " • " + time + "\nLocation: "
+                    + String.format(Locale.US, "%.5f, %.5f", item.optDouble("lat"), item.optDouble("lng"));
+        }
+        return date + " • " + time + "\nLocation: Not available";
+    }
+
+    private Bitmap decodeBitmap(String path, int maxSize) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(path, bounds);
+        int sample = 1;
+        while ((bounds.outWidth / sample) > maxSize || (bounds.outHeight / sample) > maxSize) {
+            sample *= 2;
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        return BitmapFactory.decodeFile(path, options);
+    }
+
+    private void returnToTripMateWebView() {
+        nativeMemoryScreenOpen = false;
+        if (cameraProvider != null) {
+            cameraProvider.unbindAll();
+        }
+        showTripMateWebView();
+    }
+
+    private class MemoriesAdapter extends RecyclerView.Adapter<MemoriesAdapter.MemoryViewHolder> {
+        private final List<JSONObject> items;
+
+        MemoriesAdapter(List<JSONObject> items) {
+            this.items = items;
+        }
+
+        @Override
+        public MemoryViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            LinearLayout card = new LinearLayout(parent.getContext());
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(8), dp(8), dp(8), dp(10));
+            card.setBackground(createRoundRect(COLOR_CARD, dp(16)));
+            card.setElevation(dp(4));
+            RecyclerView.LayoutParams cardParams = new RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT);
+            cardParams.setMargins(dp(6), dp(6), dp(6), dp(10));
+            card.setLayoutParams(cardParams);
+
+            ImageView image = new ImageView(parent.getContext());
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            card.addView(image, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(160)));
+            TextView details = new TextView(parent.getContext());
+            details.setTextColor(COLOR_SUBTLE);
+            details.setTextSize(12);
+            details.setPadding(dp(4), dp(8), dp(4), 0);
+            card.addView(details);
+            return new MemoryViewHolder(card, image, details);
+        }
+
+        @Override
+        public void onBindViewHolder(MemoryViewHolder holder, int position) {
+            JSONObject item = items.get(position);
+            holder.image.setImageBitmap(decodeBitmap(item.optString("path"), 500));
+            holder.details.setText(item.optString("place", "Current trip") + "\n" + formatMemoryDetails(item));
+            holder.itemView.setOnClickListener(view -> showFullScreenMemory(item));
+        }
+
+        @Override
+        public int getItemCount() {
+            return items.size();
+        }
+
+        class MemoryViewHolder extends RecyclerView.ViewHolder {
+            final ImageView image;
+            final TextView details;
+
+            MemoryViewHolder(View itemView, ImageView image, TextView details) {
+                super(itemView);
+                this.image = image;
+                this.details = details;
+            }
+        }
+    }
+
     private class AndroidAuthBridge {
         @JavascriptInterface
         public void showLogin() {
@@ -815,6 +1262,22 @@ public class MainActivity extends Activity {
                 return email.substring(0, email.indexOf('@'));
             }
             return "Traveler";
+        }
+
+        @JavascriptInterface
+        public void openCameraMemories() {
+            runOnUiThread(MainActivity.this::openCameraMemories);
+        }
+
+        @JavascriptInterface
+        public void openTripMemoriesGallery() {
+            runOnUiThread(MainActivity.this::showCameraGalleryScreen);
+        }
+
+        @JavascriptInterface
+        public void setCurrentDestination(String destination) {
+            lastKnownDestinationName = destination == null ? "" : destination;
+            Log.i(LOG_TAG, "Current destination from WebView=" + lastKnownDestinationName);
         }
     }
 
@@ -951,6 +1414,15 @@ public class MainActivity extends Activity {
             startNativeLocationUpdates();
         } else if (requestCode == REQUEST_GEOLOCATION_PERMISSION) {
             startNativeLocationUpdates();
+        } else if (requestCode == REQUEST_CAMERA_MEMORIES) {
+            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                Log.i(LOG_TAG, "Camera permission granted");
+                showCameraScreen();
+            } else {
+                Log.w(LOG_TAG, "Camera permission denied");
+                Toast.makeText(this, "Camera permission denied. You can still view saved memories.", Toast.LENGTH_LONG).show();
+                showCameraGalleryScreen();
+            }
         }
     }
 
@@ -999,12 +1471,20 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (cameraProvider != null) {
+            cameraProvider.unbindAll();
+        }
         networkExecutor.shutdownNow();
+        cameraExecutor.shutdownNow();
         super.onDestroy();
     }
 
     @Override
     public void onBackPressed() {
+        if (nativeMemoryScreenOpen) {
+            returnToTripMateWebView();
+            return;
+        }
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {

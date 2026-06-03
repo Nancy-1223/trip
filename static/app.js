@@ -504,6 +504,9 @@ async function startTrip() {
     document.getElementById('trip-status-badge').textContent = `${tripPurpose.toUpperCase()} ACTIVE`;
     document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
     activeDestinationName = dest;
+    if (window.TripMateAndroid && typeof window.TripMateAndroid.setCurrentDestination === 'function') {
+        window.TripMateAndroid.setCurrentDestination(dest);
+    }
     lastAutoFitRouteKey = null;
     mapUserHasInteracted = false;
     initMap();
@@ -1066,6 +1069,11 @@ function openQuickNote() {
     showView('notes-view');
 }
 function openQuickCamera() {
+    if (window.TripMateAndroid && typeof window.TripMateAndroid.openCameraMemories === 'function') {
+        window.TripMateAndroid.setCurrentDestination?.(activeDestinationName || document.getElementById('trip-dest-badge')?.textContent?.replace(/^TO:\s*/, '') || '');
+        window.TripMateAndroid.openCameraMemories();
+        return;
+    }
     openImageUpload(currentTripId);
 }
 
@@ -1151,6 +1159,10 @@ async function deleteNote(noteId) {
 
 // ─── Memories ─────────────────────────────────────────────────────────────────
 async function openMemoriesView() {
+    if (window.TripMateAndroid && typeof window.TripMateAndroid.openTripMemoriesGallery === 'function') {
+        window.TripMateAndroid.openTripMemoriesGallery();
+        return;
+    }
     showView('memories-view');
     await loadMemories();
 }
@@ -1515,6 +1527,9 @@ async function confirmPlannerTrip() {
         document.getElementById('trip-status-badge').textContent = 'TOUR ACTIVE';
         document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
         activeDestinationName = dest;
+        if (window.TripMateAndroid && typeof window.TripMateAndroid.setCurrentDestination === 'function') {
+            window.TripMateAndroid.setCurrentDestination(dest);
+        }
         initMap();
         await restoreActiveTripFromStorage();
     } catch { showToast('Error saving trip.'); }
