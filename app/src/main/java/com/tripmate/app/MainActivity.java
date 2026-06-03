@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Patterns;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -258,6 +259,9 @@ public class MainActivity extends Activity {
             String emailValue = email.getText().toString().trim().toLowerCase();
             String passwordValue = password.getText().toString();
             if (createAccount) {
+                Log.i(LOG_TAG, "create account clicked email=" + emailValue
+                        + " fullNameProvided=" + !finalFullName.getText().toString().trim().isEmpty()
+                        + " passwordProvided=" + !passwordValue.isEmpty());
                 createAccount(finalFullName.getText().toString().trim(), emailValue, passwordValue, status, submit);
             } else {
                 signIn(emailValue, passwordValue, status, submit);
@@ -376,37 +380,78 @@ public class MainActivity extends Activity {
 
     private void createAccount(String fullName, String email, String password, TextView status, Button submit) {
         if (fullName.isEmpty() || email.isEmpty() || password.isEmpty()) {
-            status.setText("Full name, email, and password are required.");
+            showAuthStatus(status, "Full name, email, and password are required.", COLOR_RED);
             return;
         }
+        if (!Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            showAuthStatus(status, "Enter a valid email address, for example yourname@gmail.com.", COLOR_RED);
+            return;
+        }
+        if (password.length() < 6) {
+            showAuthStatus(status, "Password must be at least 6 characters.", COLOR_RED);
+            return;
+        }
+        Log.i(LOG_TAG, "signup request started email=" + email
+                + " fullNameLength=" + fullName.length()
+                + " passwordLength=" + password.length());
         submit.setEnabled(false);
-        status.setText("Creating account...");
+        submit.setText("Creating account...");
+        showAuthStatus(status, "Creating account...", COLOR_BLUE);
         firebaseAuth.createUserWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
             if (!task.isSuccessful() || firebaseAuth.getCurrentUser() == null) {
                 submit.setEnabled(true);
-                status.setText(getErrorMessage(task.getException(), "Could not create account."));
+                submit.setText("Create Account  ->");
+                Exception exception = task.getException();
+                Log.e(LOG_TAG, "signup error email=" + email
+                        + " message=" + getErrorMessage(exception, "Could not create account."), exception);
+                showAuthStatus(status, getErrorMessage(exception, "Could not create account."), COLOR_RED);
                 return;
             }
             FirebaseUser user = firebaseAuth.getCurrentUser();
+            Log.i(LOG_TAG, "signup success uid=" + user.getUid() + " email=" + user.getEmail());
             UserProfileChangeRequest profile = new UserProfileChangeRequest.Builder()
                     .setDisplayName(fullName)
                     .build();
             user.updateProfile(profile).addOnCompleteListener(profileTask -> {
                 if (!profileTask.isSuccessful()) {
+                    Exception exception = profileTask.getException();
+                    Log.e(LOG_TAG, "signup error while saving profile email=" + email
+                            + " message=" + getErrorMessage(exception, "Could not save your full name."), exception);
                     firebaseAuth.signOut();
                     showAuthScreen(true, "Could not save your full name. Please try again.");
                     return;
                 }
+                showAuthStatus(status, "Account created. Sending verification email/OTP...", COLOR_BLUE);
                 user.sendEmailVerification().addOnCompleteListener(emailTask -> {
                         firebaseAuth.signOut();
                         if (emailTask.isSuccessful()) {
-                            showAuthScreen(false, "Verification email sent. Open the link, then sign in.");
+                            Log.i(LOG_TAG, "signup success verification email sent uid="
+                                    + user.getUid() + " email=" + user.getEmail());
+                            showAuthScreen(false, "Verification email/OTP sent. Open it, then sign in.");
                         } else {
-                            showAuthScreen(false, "Account created, but the verification email could not be sent. Try signing in again.");
+                            Exception exception = emailTask.getException();
+                            Log.e(LOG_TAG, "signup error while sending verification email="
+                                    + email + " message=" + getErrorMessage(exception,
+                                    "Verification email could not be sent."), exception);
+                            showAuthScreen(false, "Account created, but verification email/OTP could not be sent: "
+                                    + getErrorMessage(exception, "Try signing in again."));
                         }
                 });
             });
         });
+    }
+
+    private void showAuthStatus(TextView status, String message, int color) {
+        status.setText(message);
+        status.setTextColor(color);
+        status.setBackground(createRoundRect(adjustAlpha(color, 0.12f), dp(12)));
+        status.setPadding(dp(14), dp(10), dp(14), dp(10));
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) status.getLayoutParams();
+        if (params != null) {
+            params.height = LinearLayout.LayoutParams.WRAP_CONTENT;
+            params.bottomMargin = dp(12);
+            status.setLayoutParams(params);
+        }
     }
 
     private void signIn(String email, String password, TextView status, Button submit) {
