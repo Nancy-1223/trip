@@ -598,9 +598,12 @@ def firebase_session():
     try:
         decoded_token = firebase_auth.verify_id_token(id_token, app=get_firebase_app())
         firebase_user = firebase_auth.get_user(decoded_token['uid'], app=get_firebase_app())
-    except Exception:
+    except Exception as exc:
         logger.exception('Firebase ID token verification failed')
-        return jsonify({'success': False, 'error': 'Invalid Firebase login'}), 401
+        return jsonify({
+            'success': False,
+            'error': f'Firebase token verification failed: {type(exc).__name__}: {exc}',
+        }), 401
 
     email = (firebase_user.email or decoded_token.get('email') or '').strip().lower()
     if not email:

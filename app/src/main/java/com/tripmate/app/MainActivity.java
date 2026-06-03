@@ -7,6 +7,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -15,6 +17,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.webkit.ConsoleMessage;
@@ -29,12 +32,16 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException;
+import com.google.firebase.auth.FirebaseAuthInvalidUserException;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.UserProfileChangeRequest;
 
@@ -58,6 +65,16 @@ public class MainActivity extends Activity {
     private static final int REQUEST_APP_PERMISSIONS = 10;
     private static final int REQUEST_GEOLOCATION_PERMISSION = 11;
     private static final int REQUEST_FILE_CHOOSER = 12;
+    private static final int COLOR_BG = Color.rgb(234, 237, 243);
+    private static final int COLOR_CARD = Color.WHITE;
+    private static final int COLOR_TEXT = Color.rgb(26, 29, 46);
+    private static final int COLOR_SUBTLE = Color.rgb(124, 128, 151);
+    private static final int COLOR_BLUE = Color.rgb(59, 130, 246);
+    private static final int COLOR_BLUE_DARK = Color.rgb(29, 78, 216);
+    private static final int COLOR_PURPLE = Color.rgb(168, 85, 247);
+    private static final int COLOR_ORANGE = Color.rgb(249, 115, 22);
+    private static final int COLOR_RED = Color.rgb(239, 68, 68);
+    private static final int COLOR_GREEN = Color.rgb(34, 197, 94);
 
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private FirebaseAuth firebaseAuth;
@@ -86,14 +103,14 @@ public class MainActivity extends Activity {
         if (currentUser == null) {
             showAuthScreen(false, "");
         } else {
-            checkVerifiedAndOpen(currentUser);
+            checkVerifiedAndOpen(currentUser, null);
         }
     }
 
     private void configureWindow() {
         Window window = getWindow();
-        window.setStatusBarColor(Color.WHITE);
-        window.setNavigationBarColor(Color.WHITE);
+        window.setStatusBarColor(COLOR_BG);
+        window.setNavigationBarColor(COLOR_BG);
         window.getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
                         | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
@@ -110,65 +127,251 @@ public class MainActivity extends Activity {
     }
 
     private void showAuthScreen(boolean createAccount, String message) {
+        webView = null;
+        webViewLoaded = false;
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(COLOR_BG);
+
+        View blueBlob = createBlob(COLOR_BLUE, 340, 340, 0.16f);
+        FrameLayout.LayoutParams blueBlobParams = new FrameLayout.LayoutParams(dp(340), dp(340));
+        blueBlobParams.leftMargin = dp(-90);
+        blueBlobParams.topMargin = dp(-120);
+        root.addView(blueBlob, blueBlobParams);
+
+        View purpleBlob = createBlob(COLOR_PURPLE, 280, 280, 0.15f);
+        FrameLayout.LayoutParams purpleBlobParams = new FrameLayout.LayoutParams(dp(280), dp(280), Gravity.BOTTOM | Gravity.RIGHT);
+        purpleBlobParams.rightMargin = dp(-70);
+        purpleBlobParams.bottomMargin = dp(-70);
+        root.addView(purpleBlob, purpleBlobParams);
+
+        View orangeBlob = createBlob(COLOR_ORANGE, 200, 200, 0.12f);
+        FrameLayout.LayoutParams orangeBlobParams = new FrameLayout.LayoutParams(dp(200), dp(200), Gravity.BOTTOM | Gravity.LEFT);
+        orangeBlobParams.leftMargin = dp(30);
+        orangeBlobParams.bottomMargin = dp(120);
+        root.addView(orangeBlob, orangeBlobParams);
+
         ScrollView scrollView = new ScrollView(this);
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(48, 80, 48, 48);
-        scrollView.addView(form);
+        scrollView.setFillViewport(true);
+        FrameLayout centered = new FrameLayout(this);
+        centered.setPadding(dp(20), dp(32), dp(20), dp(32));
+        scrollView.addView(centered, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.MATCH_PARENT));
 
-        TextView title = new TextView(this);
-        title.setText(createAccount ? "Create your TripMate account" : "Sign in to TripMate");
-        title.setTextSize(26);
-        title.setTextColor(Color.rgb(15, 23, 42));
-        form.addView(title);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(28), dp(32), dp(28), dp(28));
+        card.setBackground(createRoundRect(COLOR_CARD, dp(28)));
+        card.setElevation(dp(14));
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        cardParams.leftMargin = dp(4);
+        cardParams.rightMargin = dp(4);
+        centered.addView(card, cardParams);
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText(createAccount
-                ? "Firebase will email you a verification link before your first sign in."
-                : "Use your verified email and password to continue.");
-        subtitle.setPadding(0, 16, 0, 24);
-        form.addView(subtitle);
+        TextView logoIcon = new TextView(this);
+        logoIcon.setText("TM");
+        logoIcon.setTextColor(Color.WHITE);
+        logoIcon.setTextSize(18);
+        logoIcon.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        logoIcon.setGravity(Gravity.CENTER);
+        logoIcon.setBackground(createGradientRect(COLOR_BLUE, COLOR_PURPLE, dp(20)));
+        logoIcon.setElevation(dp(8));
+        LinearLayout.LayoutParams logoIconParams = new LinearLayout.LayoutParams(dp(64), dp(64));
+        logoIconParams.gravity = Gravity.CENTER_HORIZONTAL;
+        logoIconParams.bottomMargin = dp(12);
+        card.addView(logoIcon, logoIconParams);
 
-        EditText fullName = createInput("Full name", InputType.TYPE_CLASS_TEXT);
-        fullName.setVisibility(createAccount ? View.VISIBLE : View.GONE);
-        form.addView(fullName);
-        EditText email = createInput("Email", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
-        form.addView(email);
-        EditText password = createInput("Password", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        form.addView(password);
+        TextView brand = new TextView(this);
+        brand.setText("TripMate");
+        brand.setTextColor(COLOR_TEXT);
+        brand.setTextSize(28);
+        brand.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        brand.setGravity(Gravity.CENTER);
+        card.addView(brand, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView tagline = new TextView(this);
+        tagline.setText("Your intelligent travel companion");
+        tagline.setTextColor(COLOR_SUBTLE);
+        tagline.setTextSize(13);
+        tagline.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams taglineParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        taglineParams.topMargin = dp(4);
+        taglineParams.bottomMargin = dp(28);
+        card.addView(tagline, taglineParams);
+
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
+        tabs.setBackground(createRoundRect(COLOR_BG, dp(12)));
+        LinearLayout.LayoutParams tabsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        tabsParams.bottomMargin = dp(24);
+        card.addView(tabs, tabsParams);
+
+        Button signInTab = createTabButton("Sign In", !createAccount);
+        signInTab.setOnClickListener(view -> showAuthScreen(false, ""));
+        tabs.addView(signInTab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1));
+
+        Button createTab = createTabButton("Create Account", createAccount);
+        createTab.setOnClickListener(view -> showAuthScreen(true, ""));
+        tabs.addView(createTab, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1));
+
+        EditText fullName = null;
+        if (createAccount) {
+            fullName = createInput("Full Name", "Enter your full name", InputType.TYPE_CLASS_TEXT);
+            card.addView(createField("Full Name", fullName, "user"));
+        }
+        EditText email = createInput("Email", "you@example.com",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        card.addView(createField("Email", email, "mail"));
+        EditText password = createInput("Password", createAccount ? "create password" : "password",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        card.addView(createField("Password", password, "lock"));
 
         TextView status = new TextView(this);
         status.setText(message);
-        status.setTextColor(Color.rgb(30, 64, 175));
-        status.setPadding(0, 16, 0, 16);
-        form.addView(status);
+        status.setTextColor(message.toLowerCase().contains("could not")
+                || message.toLowerCase().contains("error")
+                || message.toLowerCase().contains("failed") ? COLOR_RED : COLOR_BLUE);
+        status.setTextSize(13);
+        status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        status.setPadding(dp(14), message.isEmpty() ? 0 : dp(10), dp(14), message.isEmpty() ? 0 : dp(10));
+        status.setBackground(message.isEmpty() ? null : createRoundRect(adjustAlpha(status.getCurrentTextColor(), 0.12f), dp(12)));
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, message.isEmpty() ? 0 : LinearLayout.LayoutParams.WRAP_CONTENT);
+        statusParams.bottomMargin = message.isEmpty() ? 0 : dp(12);
+        card.addView(status, statusParams);
 
         Button submit = new Button(this);
-        submit.setText(createAccount ? "Create account" : "Sign in");
+        submit.setAllCaps(false);
+        submit.setText(createAccount ? "Create Account  ->" : "Sign In  ->");
+        submit.setTextColor(Color.WHITE);
+        submit.setTextSize(16);
+        submit.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        submit.setBackground(createGradientRect(COLOR_BLUE, COLOR_BLUE_DARK, dp(12)));
+        submit.setPadding(dp(16), 0, dp(16), 0);
+        submit.setElevation(dp(8));
+        EditText finalFullName = fullName;
         submit.setOnClickListener(view -> {
             String emailValue = email.getText().toString().trim().toLowerCase();
             String passwordValue = password.getText().toString();
             if (createAccount) {
-                createAccount(fullName.getText().toString().trim(), emailValue, passwordValue, status, submit);
+                createAccount(finalFullName.getText().toString().trim(), emailValue, passwordValue, status, submit);
             } else {
                 signIn(emailValue, passwordValue, status, submit);
             }
         });
-        form.addView(submit);
+        LinearLayout.LayoutParams submitParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        submitParams.topMargin = dp(8);
+        card.addView(submit, submitParams);
 
-        Button toggle = new Button(this);
-        toggle.setText(createAccount ? "Already have an account? Sign in" : "New here? Create account");
-        toggle.setOnClickListener(view -> showAuthScreen(!createAccount, ""));
-        form.addView(toggle);
-        setContentView(scrollView);
+        root.addView(scrollView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        setContentView(root);
     }
 
-    private EditText createInput(String hint, int inputType) {
+    private LinearLayout createField(String labelText, EditText input, String iconText) {
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        groupParams.bottomMargin = dp(16);
+        group.setLayoutParams(groupParams);
+
+        TextView label = new TextView(this);
+        label.setText(labelText.toUpperCase());
+        label.setTextColor(COLOR_SUBTLE);
+        label.setTextSize(11);
+        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        label.setLetterSpacing(0.08f);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        labelParams.bottomMargin = dp(6);
+        group.addView(label, labelParams);
+
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setBackground(createRoundRect(COLOR_BG, dp(12)));
+        wrap.setPadding(0, 0, 0, 0);
+        TextView icon = new TextView(this);
+        icon.setText(iconText);
+        icon.setTextColor(COLOR_SUBTLE);
+        icon.setTextSize(11);
+        icon.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        icon.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(42), dp(50), Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        wrap.addView(icon, iconParams);
+        wrap.addView(input, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(50)));
+        group.addView(wrap, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(50)));
+        return group;
+    }
+
+    private EditText createInput(String hint, String placeholder, int inputType) {
         EditText input = new EditText(this);
-        input.setHint(hint);
+        input.setHint(placeholder);
+        input.setHintTextColor(Color.rgb(148, 152, 170));
+        input.setTextColor(COLOR_TEXT);
+        input.setTextSize(15);
         input.setInputType(inputType);
-        input.setPadding(0, 16, 0, 16);
+        input.setSingleLine(true);
+        input.setBackgroundColor(Color.TRANSPARENT);
+        input.setPadding(dp(42), 0, dp(14), 0);
         return input;
+    }
+
+    private Button createTabButton(String text, boolean active) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(text);
+        button.setTextSize(13);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setTextColor(active ? COLOR_TEXT : COLOR_SUBTLE);
+        button.setBackground(active ? createRoundRect(COLOR_CARD, dp(9)) : createRoundRect(Color.TRANSPARENT, dp(9)));
+        button.setElevation(active ? dp(3) : 0);
+        button.setPadding(0, 0, 0, 0);
+        return button;
+    }
+
+    private View createBlob(int color, int widthDp, int heightDp, float alpha) {
+        View view = new View(this);
+        view.setAlpha(alpha);
+        view.setBackground(createOval(color));
+        return view;
+    }
+
+    private GradientDrawable createOval(int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.OVAL);
+        drawable.setColor(color);
+        return drawable;
+    }
+
+    private GradientDrawable createRoundRect(int color, int radiusPx) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setShape(GradientDrawable.RECTANGLE);
+        drawable.setColor(color);
+        drawable.setCornerRadius(radiusPx);
+        return drawable;
+    }
+
+    private GradientDrawable createGradientRect(int startColor, int endColor, int radiusPx) {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[] { startColor, endColor });
+        drawable.setCornerRadius(radiusPx);
+        return drawable;
+    }
+
+    private int adjustAlpha(int color, float factor) {
+        return Color.argb(Math.round(Color.alpha(color) * factor), Color.red(color), Color.green(color), Color.blue(color));
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void createAccount(String fullName, String email, String password, TextView status, Button submit) {
@@ -211,15 +414,26 @@ public class MainActivity extends Activity {
             status.setText("Email and password are required.");
             return;
         }
+        Log.i(LOG_TAG, "Firebase sign-in requested email=" + email
+                + " passwordProvided=" + !password.isEmpty()
+                + " passwordLength=" + password.length());
         submit.setEnabled(false);
         status.setText("Signing in...");
         firebaseAuth.signInWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
             if (!task.isSuccessful() || firebaseAuth.getCurrentUser() == null) {
                 submit.setEnabled(true);
-                status.setText(getErrorMessage(task.getException(), "Could not sign in."));
+                Exception exception = task.getException();
+                logAuthFailure("Firebase signInWithEmailAndPassword failed email=" + email, exception);
+                status.setText(getErrorMessage(exception, "Could not sign in."));
                 return;
             }
-            checkVerifiedAndOpen(firebaseAuth.getCurrentUser());
+            FirebaseUser currentUser = firebaseAuth.getCurrentUser();
+            Log.i(LOG_TAG, "Firebase signInWithEmailAndPassword succeeded uid="
+                    + currentUser.getUid() + " email=" + currentUser.getEmail());
+            Log.i(LOG_TAG, "Firebase login success uid=" + currentUser.getUid()
+                    + " email=" + currentUser.getEmail());
+            status.setText("Firebase sign-in succeeded. Refreshing account verification status...");
+            checkVerifiedAndOpen(currentUser, status);
         });
     }
 
@@ -227,18 +441,49 @@ public class MainActivity extends Activity {
         return exception == null || exception.getMessage() == null ? fallback : exception.getMessage();
     }
 
-    private void checkVerifiedAndOpen(FirebaseUser user) {
+    private void logAuthFailure(String context, Exception exception) {
+        if (exception instanceof FirebaseAuthInvalidCredentialsException) {
+            Log.e(LOG_TAG, context + " type=FirebaseAuthInvalidCredentialsException message="
+                    + exception.getMessage(), exception);
+        } else if (exception instanceof FirebaseAuthInvalidUserException) {
+            Log.e(LOG_TAG, context + " type=FirebaseAuthInvalidUserException message="
+                    + exception.getMessage(), exception);
+        } else if (exception instanceof FirebaseAuthException) {
+            FirebaseAuthException authException = (FirebaseAuthException) exception;
+            Log.e(LOG_TAG, context + " type=FirebaseAuthException errorCode="
+                    + authException.getErrorCode() + " message=" + authException.getMessage(), authException);
+        } else {
+            Log.e(LOG_TAG, context + " type="
+                    + (exception == null ? "unknown" : exception.getClass().getSimpleName())
+                    + " message=" + getErrorMessage(exception, "No exception message"), exception);
+        }
+    }
+
+    private void checkVerifiedAndOpen(FirebaseUser user, TextView status) {
+        Log.i(LOG_TAG, "Reloading Firebase user uid=" + user.getUid() + " email=" + user.getEmail());
         user.reload().addOnCompleteListener(task -> {
             FirebaseUser refreshedUser = firebaseAuth.getCurrentUser();
             if (!task.isSuccessful() || refreshedUser == null) {
+                Exception exception = task.getException();
+                logAuthFailure("Firebase currentUser.reload failed", exception);
                 firebaseAuth.signOut();
-                showAuthScreen(false, "Could not refresh your account. Please sign in again.");
+                showAuthScreen(false, getErrorMessage(exception, "Could not refresh your account. Please sign in again."));
                 return;
+            }
+            String verificationStatus = "Firebase reload succeeded. Email verified: "
+                    + refreshedUser.isEmailVerified() + ".";
+            Log.i(LOG_TAG, verificationStatus + " uid=" + refreshedUser.getUid()
+                    + " email=" + refreshedUser.getEmail());
+            Log.i(LOG_TAG, "Firebase emailVerified value=" + refreshedUser.isEmailVerified()
+                    + " uid=" + refreshedUser.getUid());
+            if (status != null) {
+                status.setText(verificationStatus);
             }
             if (!refreshedUser.isEmailVerified()) {
                 refreshedUser.sendEmailVerification();
                 firebaseAuth.signOut();
-                showAuthScreen(false, "Please verify your email first. A new verification link has been sent.");
+                showAuthScreen(false, verificationStatus
+                        + " Please verify your email first. A new verification link has been sent.");
                 return;
             }
             exchangeFirebaseToken(refreshedUser);
@@ -248,11 +493,17 @@ public class MainActivity extends Activity {
     private void exchangeFirebaseToken(FirebaseUser user) {
         user.getIdToken(true).addOnCompleteListener(task -> {
             if (!task.isSuccessful() || task.getResult() == null) {
+                Exception exception = task.getException();
+                logAuthFailure("Firebase getIdToken failed", exception);
                 firebaseAuth.signOut();
-                showAuthScreen(false, "Could not start your TripMate session. Please sign in again.");
+                showAuthScreen(false, getErrorMessage(exception,
+                        "Could not start your TripMate session. Please sign in again."));
                 return;
             }
             String idToken = task.getResult().getToken();
+            Log.i(LOG_TAG, "Firebase token generated uid=" + user.getUid()
+                    + " tokenPresent=" + (idToken != null && !idToken.isEmpty())
+                    + " tokenLength=" + (idToken == null ? 0 : idToken.length()));
             networkExecutor.execute(() -> createBackendSession(idToken));
         });
     }
@@ -271,20 +522,35 @@ public class MainActivity extends Activity {
             }
             int statusCode = connection.getResponseCode();
             String responseBody = readResponse(statusCode < 400 ? connection.getInputStream() : connection.getErrorStream());
+            Log.i(LOG_TAG, "Backend session response status=" + statusCode + " body=" + responseBody);
             if (statusCode < 200 || statusCode >= 300) {
-                JSONObject error = new JSONObject(responseBody);
-                throw new IllegalStateException(error.optString("error", "Could not start TripMate session."));
+                throw new IllegalStateException(extractBackendError(responseBody, statusCode));
             }
             storeCookies(connection.getHeaderFields());
             runOnUiThread(this::showTripMateWebView);
         } catch (Exception exception) {
-            Log.e(LOG_TAG, "Backend session exchange failed", exception);
-            firebaseAuth.signOut();
-            runOnUiThread(() -> showAuthScreen(false, getErrorMessage(exception, "Could not start TripMate session.")));
+            String backendError = getErrorMessage(exception, "Backend session endpoint failed.");
+            Log.e(LOG_TAG, "Backend session exchange failed realError=" + backendError
+                    + ". Verified Firebase user will open WebView directly.", exception);
+            runOnUiThread(this::showTripMateWebView);
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
+        }
+    }
+
+    private String extractBackendError(String responseBody, int statusCode) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return "Backend session failed with HTTP " + statusCode + " and an empty response.";
+        }
+        try {
+            JSONObject error = new JSONObject(responseBody);
+            String message = error.optString("error",
+                    error.optString("message", responseBody));
+            return "Backend session failed with HTTP " + statusCode + ": " + message;
+        } catch (Exception ignored) {
+            return "Backend session failed with HTTP " + statusCode + ": " + responseBody;
         }
     }
 
@@ -317,6 +583,7 @@ public class MainActivity extends Activity {
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     private void showTripMateWebView() {
+        Log.i(LOG_TAG, "WebView opened url=" + TRIPMATE_URL);
         if (webView != null) {
             setContentView(webView);
             return;

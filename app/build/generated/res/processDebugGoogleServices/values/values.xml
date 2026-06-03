@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gcm_defaultSenderId" translatable="false">889412628010</string>
+    <string name="google_api_key" translatable="false">AIzaSyCK-e4dN8dAC8-JYZm8fxGd1mpn44jlj94</string>
+    <string name="google_app_id" translatable="false">1:889412628010:android:01b75e1286c0e6ccb01d53</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyCK-e4dN8dAC8-JYZm8fxGd1mpn44jlj94</string>
+    <string name="google_storage_bucket" translatable="false">trip-mate-6898c.firebasestorage.app</string>
+    <string name="project_id" translatable="false">trip-mate-6898c</string>
+</resources>

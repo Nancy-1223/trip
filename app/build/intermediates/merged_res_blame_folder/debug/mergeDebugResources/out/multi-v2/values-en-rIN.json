@@ -1,0 +1,53 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.tripmate.app-mergeDebugResources-16:/values-en-rIN/values-en-rIN.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\91a18a130673c7658ec120685f8fc143\\transformed\\browser-1.4.0\\res\\values-en-rIN\\values-en-rIN.xml",
+                    "from": {
+                        "startLines": "2,3,4,5",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,153,250,359",
+                        "endColumns": "97,96,108,98",
+                        "endOffsets": "148,245,354,453"
+                    },
+                    "to": {
+                        "startLines": "4,5,6,7",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "281,379,476,585",
+                        "endColumns": "97,96,108,98",
+                        "endOffsets": "374,471,580,679"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\0fad41534e7c1c4f0f6d855663fb084d\\transformed\\core-1.2.0\\res\\values-en-rIN\\values-en-rIN.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "100",
+                        "endOffsets": "151"
+                    },
+                    "to": {
+                        "startLines": "8",
+                        "startColumns": "4",
+                        "startOffsets": "684",
+                        "endColumns": "100",
+                        "endOffsets": "780"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\1ca058f2bd7e21b4d04d082e681993b0\\transformed\\credentials-1.2.0-rc01\\res\\values-en-rIN\\values-en-rIN.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,167",
+                        "endColumns": "111,113",
+                        "endOffsets": "162,276"
+                    }
+                }
+            ]
+        }
+    ]
+}

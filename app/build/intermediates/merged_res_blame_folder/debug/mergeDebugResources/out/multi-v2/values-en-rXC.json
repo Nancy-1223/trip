@@ -1,0 +1,53 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.tripmate.app-mergeDebugResources-16:/values-en-rXC/values-en-rXC.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\91a18a130673c7658ec120685f8fc143\\transformed\\browser-1.4.0\\res\\values-en-rXC\\values-en-rXC.xml",
+                    "from": {
+                        "startLines": "2,3,4,5",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,255,454,665",
+                        "endColumns": "199,198,210,201",
+                        "endOffsets": "250,449,660,862"
+                    },
+                    "to": {
+                        "startLines": "4,5,6,7",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "486,686,885,1096",
+                        "endColumns": "199,198,210,201",
+                        "endOffsets": "681,880,1091,1293"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\1ca058f2bd7e21b4d04d082e681993b0\\transformed\\credentials-1.2.0-rc01\\res\\values-en-rXC\\values-en-rXC.xml",
+                    "from": {
+                        "startLines": "2,3",
+                        "startColumns": "4,4",
+                        "startOffsets": "55,270",
+                        "endColumns": "214,215",
+                        "endOffsets": "265,481"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\nann6\\.gradle\\caches\\9.0.0\\transforms\\0fad41534e7c1c4f0f6d855663fb084d\\transformed\\core-1.2.0\\res\\values-en-rXC\\values-en-rXC.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "203",
+                        "endOffsets": "254"
+                    },
+                    "to": {
+                        "startLines": "8",
+                        "startColumns": "4",
+                        "startOffsets": "1298",
+                        "endColumns": "203",
+                        "endOffsets": "1497"
+                    }
+                }
+            ]
+        }
+    ]
+}
