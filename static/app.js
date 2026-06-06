@@ -34,6 +34,7 @@ let tripsLoadPromise = null;
 let routeDrawTimer = null;
 let routeRequestSeq = 0;
 let lastRouteDrawKey = '';
+const TRIP_HISTORY_KEY = 'tripmateTripHistory';
 const routeCache = new Map();
 const touristSpotCache = new Map();
 
@@ -366,6 +367,81 @@ function showTripDetail(tripId) {
     showToast(`${t.destination}`);
 }
 
+function readLocalHistory() {
+    try {
+        const raw = localStorage.getItem(TRIP_HISTORY_KEY);
+        const items = raw ? JSON.parse(raw) : [];
+        return Array.isArray(items) ? items.filter(item => item && item.destination) : [];
+    } catch (err) {
+        console.error('[TripMate] History load error', err);
+        return [];
+    }
+}
+
+function writeLocalHistory(items) {
+    localStorage.setItem(TRIP_HISTORY_KEY, JSON.stringify(items.slice(0, 30)));
+}
+
+function saveTripHistory(entry) {
+    console.log('[TripMate] History save started');
+    try {
+        const destination = String(entry?.destination || '').trim();
+        if (!destination) return null;
+        const now = new Date().toISOString();
+        const localId = entry.local_id || `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const item = {
+            local_id: localId,
+            server_trip_id: entry.server_trip_id || null,
+            destination,
+            start_loc: String(entry.start_loc || '').trim(),
+            purpose: entry.purpose || 'Tour',
+            distance: Number(entry.distance) || 0,
+            created_at: entry.created_at || now,
+            history_type: entry.history_type || 'Trip'
+        };
+        const existing = readLocalHistory().filter(old => {
+            if (old.local_id && old.local_id === item.local_id) return false;
+            if (old.server_trip_id && item.server_trip_id && old.server_trip_id === item.server_trip_id) return false;
+            return old.destination?.trim()?.toLowerCase() !== item.destination.toLowerCase()
+                || old.history_type !== item.history_type;
+        });
+        writeLocalHistory([item, ...existing]);
+        console.log('[TripMate] History save success');
+        return localId;
+    } catch (err) {
+        console.error('[TripMate] History save error', err);
+        return null;
+    }
+}
+
+function attachServerTripToLocalHistory(localId, serverTripId) {
+    if (!localId || !serverTripId) return;
+    try {
+        const items = readLocalHistory();
+        const next = items.map(item => item.local_id === localId ? { ...item, server_trip_id: serverTripId } : item);
+        writeLocalHistory(next);
+    } catch (err) {
+        console.error('[TripMate] History save error', err);
+    }
+}
+
+function mergeHistoryItems(serverTrips, localItems) {
+    const serverIds = new Set((serverTrips || []).map(trip => String(trip.id)));
+    const normalizedServer = (serverTrips || []).map(trip => ({
+        ...trip,
+        history_type: 'Trip'
+    }));
+    const normalizedLocal = (localItems || [])
+        .filter(item => !item.server_trip_id || !serverIds.has(String(item.server_trip_id)))
+        .map(item => ({
+            ...item,
+            id: item.server_trip_id || item.local_id
+        }));
+    return [...normalizedServer, ...normalizedLocal]
+        .filter(item => item && item.destination)
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+}
+
 // ─── Trip Setup Modal ─────────────────────────────────────────────────────────
 function showSetupModal() {
     document.getElementById('setup-modal').classList.remove('hidden');
@@ -537,6 +613,13 @@ async function startTrip() {
     document.getElementById('trip-status-badge').textContent = `${tripPurpose.toUpperCase()} ACTIVE`;
     document.getElementById('trip-dest-badge').textContent = `TO: ${dest}`;
     activeDestinationName = dest;
+    const localHistoryId = saveTripHistory({
+        destination: dest,
+        start_loc: start,
+        purpose: tripPurpose,
+        distance: 0,
+        history_type: 'Destination'
+    });
     if (window.TripMateAndroid && typeof window.TripMateAndroid.setCurrentDestination === 'function') {
         window.TripMateAndroid.setCurrentDestination(dest);
     }
@@ -560,6 +643,7 @@ async function startTrip() {
         });
         const data = await res.json();
         currentTripId = data.trip_id;
+        attachServerTripToLocalHistory(localHistoryId, data.trip_id);
     } catch (err) { console.error('[TripMate] Trip save failed:', err); }
 }
 
@@ -1354,29 +1438,69 @@ function closeLightbox() {
 
 // ─── History View ─────────────────────────────────────────────────────────────
 async function openHistoryView() {
+    console.log('[TripMate] History opened');
     showView('history-view');
     const list = document.getElementById('history-list');
-    list.innerHTML = '<div class="empty-placeholder">Loading history...</div>';
-    // Always re-fetch fresh from server
-    try {
-        const res = await fetch('/api/trips');
-        if (res.status === 401) { if (!showAndroidLoginIfAvailable()) showView('login-view'); return; }
-        allTrips = await res.json();
-    } catch {
-        list.innerHTML = '<div class="empty-placeholder">Error loading trips.</div>';
+    if (!list) {
+        console.error('[TripMate] History load error', new Error('history-list missing'));
         return;
     }
-    if (!allTrips.length) { list.innerHTML = '<div class="empty-placeholder">No trips yet. Start your first adventure!</div>'; return; }
-    list.innerHTML = allTrips.map(t => `
-        <div class="history-card">
-            <div class="history-dest">${escHtml(t.destination)}</div>
-            <div class="history-meta">
-                <span class="history-tag purpose">${t.purpose}</span>
-                ${t.distance > 0 ? `<span class="history-tag date">📍 ${t.distance} km</span>` : ''}
-                <span class="history-tag date">${new Date(t.created_at).toLocaleDateString('en-IN')}</span>
+    console.log('[TripMate] History load started');
+    list.innerHTML = '<div class="empty-placeholder">Loading history...</div>';
+    try {
+        const localHistory = readLocalHistory();
+        let serverTrips = [];
+        const res = await fetch('/api/trips');
+        if (res.status === 401) {
+            if (canUseAndroidFirebaseFallback()) {
+                allTrips = [];
+            } else {
+                if (!showAndroidLoginIfAvailable()) showView('login-view');
+                return;
+            }
+        } else if (!res.ok) {
+            throw new Error(`History request failed: ${res.status}`);
+        } else {
+            serverTrips = await res.json();
+            allTrips = Array.isArray(serverTrips) ? serverTrips : [];
+        }
+        const historyItems = mergeHistoryItems(allTrips, localHistory);
+        console.log('[TripMate] History load success');
+        if (!historyItems.length) {
+            list.innerHTML = '<div class="empty-placeholder">No trips yet</div>';
+            return;
+        }
+        list.innerHTML = historyItems.map(t => `
+            <div class="history-card">
+                <div class="history-dest">${escHtml(t.destination)}</div>
+                <div class="history-meta">
+                    <span class="history-tag purpose">${escHtml(t.purpose || t.history_type || 'Trip')}</span>
+                    ${Number(t.distance) > 0 ? `<span class="history-tag date">📍 ${Number(t.distance).toFixed(1)} km</span>` : ''}
+                    <span class="history-tag date">${new Date(t.created_at || Date.now()).toLocaleDateString('en-IN')}</span>
+                </div>
             </div>
-        </div>
-    `).join('');
+        `).join('');
+        lucide.createIcons();
+    } catch (err) {
+        console.error('[TripMate] History load error', err);
+        const localHistory = readLocalHistory();
+        const historyItems = mergeHistoryItems([], localHistory);
+        if (!historyItems.length) {
+            list.innerHTML = '<div class="empty-placeholder">No trips yet</div>';
+            return;
+        }
+        list.innerHTML = historyItems.map(t => `
+            <div class="history-card">
+                <div class="history-dest">${escHtml(t.destination)}</div>
+                <div class="history-meta">
+                    <span class="history-tag purpose">${escHtml(t.purpose || t.history_type || 'Trip')}</span>
+                    ${Number(t.distance) > 0 ? `<span class="history-tag date">📍 ${Number(t.distance).toFixed(1)} km</span>` : ''}
+                    <span class="history-tag date">${new Date(t.created_at || Date.now()).toLocaleDateString('en-IN')}</span>
+                </div>
+            </div>
+        `).join('');
+        lucide.createIcons();
+    }
 }
 
 // ─── Planner ──────────────────────────────────────────────────────────────────
@@ -1579,6 +1703,13 @@ async function confirmPlannerTrip() {
         activeStartLng: activeStartLatLng[1],
         activeRouteGeometry: plannerLastRouteGeometry
     });
+    const localHistoryId = saveTripHistory({
+        destination: dest,
+        start_loc: start,
+        purpose: 'Tour',
+        distance,
+        history_type: 'Route'
+    });
 
     try {
         const res = await fetch('/api/trips', {
@@ -1593,6 +1724,7 @@ async function confirmPlannerTrip() {
         });
         const data = await res.json();
         currentTripId = data.trip_id;
+        attachServerTripToLocalHistory(localHistoryId, data.trip_id);
         
         showToast('Trip Saved! Starting navigation...');
         showView('map-view');
